@@ -19,24 +19,24 @@ type Config struct {
 
 // PlantConfig contains metadata about the manufacturing plant.
 type PlantConfig struct {
-	Name     string
-	Location string
-	TimeZone string
+	Name     string `yaml:"name"`
+	Location string `yaml:"location"`
+	TimeZone string `yaml:"timezone"`
 }
 
 // CollectorConfig contains runtime settings for the telemetry collector.
 type CollectorConfig struct {
-	Workers    int
-	BufferSize int
+	Workers    int `yaml:"workers"`
+	BufferSize int `yaml:"buffer_size"`
 }
 
 // APIConfig contains HTTP server configuration.
 type APIConfig struct {
-	Host string
-	Port int
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
 }
 
 // AggregatorConfig contains runtime settings for the aggregation service.
 type AggregatorConfig struct {
-	Interval time.Duration
+	Interval time.Duration `yaml:"interval"`
 }
