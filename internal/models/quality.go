@@ -7,7 +7,6 @@ const (
 	QualityGood Quality = iota
 	QualityBad
 	QualityUncertain
-	QualityTimeout
 	QualityDisconnected
-	QualityCommunicationError
+	QualityTimeout
 )
