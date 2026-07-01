@@ -1,8 +1,6 @@
 package config
 
 import (
-	"time"
-
 	"pharma-platform/internal/models"
 )
 
@@ -26,8 +24,6 @@ type PlantConfig struct {
 
 // CollectorConfig contains runtime settings for the telemetry collector.
 type CollectorConfig struct {
-	Workers    int `yaml:"workers"`
-	BufferSize int `yaml:"buffer_size"`
 }
 
 // APIConfig contains HTTP server configuration.
@@ -38,5 +34,4 @@ type APIConfig struct {
 
 // AggregatorConfig contains runtime settings for the aggregation service.
 type AggregatorConfig struct {
-	Interval time.Duration `yaml:"interval"`
 }
