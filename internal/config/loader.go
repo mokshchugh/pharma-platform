@@ -2,72 +2,54 @@ package config
 
 import (
 	"fmt"
-
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
 
-// loadPlant reads and decodes plant.yaml.
-func loadPlant(path string) (PlantConfig, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return PlantConfig{}, fmt.Errorf("open plant config: %w", err)
-	}
-	defer file.Close()
+// Load reads the complete application configuration from a configuration directory.
+func Load(configDir string) (*Config, error) {
+	cfg := &Config{}
 
-	var plant PlantConfig
-	if err := yaml.NewDecoder(file).Decode(&plant); err != nil {
-		return PlantConfig{}, fmt.Errorf("decode plant config: %w", err)
+	if err := loadYAML(filepath.Join(configDir, "plant.yaml"), &cfg.Plant); err != nil {
+		return nil, fmt.Errorf("load plant configuration: %w", err)
 	}
 
-	return plant, nil
+	if err := loadYAML(filepath.Join(configDir, "collector.yaml"), &cfg.Collector); err != nil {
+		return nil, fmt.Errorf("load collector configuration: %w", err)
+	}
+
+	if err := loadYAML(filepath.Join(configDir, "api.yaml"), &cfg.API); err != nil {
+		return nil, fmt.Errorf("load api configuration: %w", err)
+	}
+
+	if err := loadYAML(filepath.Join(configDir, "aggregation.yaml"), &cfg.Aggregator); err != nil {
+		return nil, fmt.Errorf("load aggregation configuration: %w", err)
+	}
+
+	if err := loadYAML(filepath.Join(configDir, "plcs.yaml"), &cfg.PLCs); err != nil {
+		return nil, fmt.Errorf("load plcs configuration: %w", err)
+	}
+
+	if err := loadYAML(filepath.Join(configDir, "tags.yaml"), &cfg.Tags); err != nil {
+		return nil, fmt.Errorf("load tags configuration: %w", err)
+	}
+
+	return cfg, nil
 }
 
-// loadCollector reads and decodes collector.yaml.
-func loadCollector(path string) (CollectorConfig, error) {
+// loadYAML opens a YAML file and decodes its contents into out.
+func loadYAML(path string, out any) error {
 	file, err := os.Open(path)
 	if err != nil {
-		return CollectorConfig{}, fmt.Errorf("open collector config: %w", err)
+		return fmt.Errorf("open %s: %w", path, err)
 	}
 	defer file.Close()
 
-	var collector CollectorConfig
-	if err := yaml.NewDecoder(file).Decode(&collector); err != nil {
-		return CollectorConfig{}, fmt.Errorf("decode collector config: %w", err)
+	if err := yaml.NewDecoder(file).Decode(out); err != nil {
+		return fmt.Errorf("decode %s: %w", path, err)
 	}
 
-	return collector, nil
-}
-
-// loadAPI reads and decodes api.yaml.
-func loadAPI(path string) (APIConfig, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return APIConfig{}, fmt.Errorf("open api config: %w", err)
-	}
-	defer file.Close()
-
-	var api APIConfig
-	if err := yaml.NewDecoder(file).Decode(&api); err != nil {
-		return APIConfig{}, fmt.Errorf("decode api config: %w", err)
-	}
-
-	return api, nil
-}
-
-// loadAggregator reads and decodes aggregation.yaml.
-func loadAggregator(path string) (AggregatorConfig, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return AggregatorConfig{}, fmt.Errorf("open aggregator config: %w", err)
-	}
-	defer file.Close()
-
-	var aggregator AggregatorConfig
-	if err := yaml.NewDecoder(file).Decode(&aggregator); err != nil {
-		return AggregatorConfig{}, fmt.Errorf("decode aggregator config: %w", err)
-	}
-
-	return aggregator, nil
+	return nil
 }

@@ -2,6 +2,7 @@ package config
 
 import (
 	"pharma-platform/internal/models"
+	"time"
 )
 
 // Config represents the complete application configuration.
@@ -34,4 +35,5 @@ type APIConfig struct {
 
 // AggregatorConfig contains runtime settings for the aggregation service.
 type AggregatorConfig struct {
+	Interval time.Duration `yaml:"interval"`
 }
