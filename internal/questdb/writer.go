@@ -38,17 +38,17 @@ func (w *Writer) Start(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return w.flush()
+			return w.flush(ctx)
 
 		case sample, ok := <-w.samples:
 			if !ok {
-				return w.flush()
+				return w.flush(ctx)
 			}
 
 			w.buffer = append(w.buffer, sample)
 
 			if len(w.buffer) >= w.client.cfg.BatchSize {
-				if err := w.flush(); err != nil {
+				if err := w.flush(ctx); err != nil {
 					return err
 				}
 			}
@@ -58,7 +58,7 @@ func (w *Writer) Start(ctx context.Context) error {
 				continue
 			}
 
-			if err := w.flush(); err != nil {
+			if err := w.flush(ctx); err != nil {
 				return err
 			}
 		}
@@ -66,14 +66,14 @@ func (w *Writer) Start(ctx context.Context) error {
 }
 
 func (w *Writer) Stop() error {
-	if err := w.flush(); err != nil {
+	if err := w.flush(context.Background()); err != nil {
 		return err
 	}
 
 	return w.client.Close()
 }
 
-func (w *Writer) flush() error {
+func (w *Writer) flush(ctx context.Context) error {
 	if len(w.buffer) == 0 {
 		return nil
 	}
@@ -88,7 +88,14 @@ func (w *Writer) flush() error {
 	)
 
 	if _, err := w.client.conn.Write([]byte(data)); err != nil {
-		return err
+
+		if err := w.client.reconnect(ctx); err != nil {
+			return err
+		}
+
+		if _, err := w.client.conn.Write([]byte(data)); err != nil {
+			return err
+		}
 	}
 
 	w.buffer = w.buffer[:0]

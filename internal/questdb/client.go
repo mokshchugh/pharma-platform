@@ -66,3 +66,9 @@ func (c *Client) Close() error {
 
 	return nil
 }
+
+func (c *Client) reconnect(ctx context.Context) error {
+	_ = c.Close()
+
+	return c.Connect(ctx)
+}

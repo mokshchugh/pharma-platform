@@ -12,8 +12,16 @@ func (c *Collector) runWorker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 
-		case tag := <-c.workQueue:
+		case tag, ok := <-c.workQueue:
+			if !ok {
+				return
+			}
 			sample, err := c.driver.Read(ctx, tag)
+
+			c.mu.Lock()
+			delete(c.inFlight, tagKey(tag))
+			c.mu.Unlock()
+
 			if err != nil {
 				continue
 			}

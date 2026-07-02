@@ -19,7 +19,14 @@ type Collector struct {
 
 	config config.CollectorConfig
 
+	inFlight map[string]bool
+	mu       sync.Mutex
+
 	wg sync.WaitGroup
+}
+
+func tagKey(tag models.Tag) string {
+	return tag.PLCID + ":" + tag.ID
 }
 
 func New(
@@ -34,6 +41,7 @@ func New(
 		tags:      tags,
 		workQueue: make(chan models.Tag, config.QueueSize),
 		samples:   samples,
+		inFlight:  make(map[string]bool),
 	}
 }
 

@@ -18,8 +18,8 @@ func encode(
 			&b,
 			"%s,plc_id=%s,tag_id=%s value=%s,quality=%di %d\n",
 			table,
-			sample.PLCID,
-			sample.TagID,
+			escapeSymbol(sample.PLCID),
+			escapeSymbol(sample.TagID),
 			encodeValue(sample.Value),
 			sample.Quality,
 			sample.Timestamp.UnixNano(),
@@ -79,4 +79,15 @@ func encodeValue(value any) string {
 	default:
 		return fmt.Sprintf("\"%v\"", v)
 	}
+}
+
+var symbolEscaper = strings.NewReplacer(
+	"\\", "\\\\",
+	" ", "\\ ",
+	",", "\\,",
+	"=", "\\=",
+)
+
+func escapeSymbol(s string) string {
+	return symbolEscaper.Replace(s)
 }

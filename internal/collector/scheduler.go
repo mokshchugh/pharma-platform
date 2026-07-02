@@ -28,11 +28,26 @@ func (c *Collector) runScheduler(ctx context.Context) {
 					continue
 				}
 
+				c.mu.Lock()
+
+				key := tagKey(tag)
+
+				if c.inFlight[key] {
+					c.mu.Unlock()
+					continue
+				}
+
+				c.inFlight[key] = true
+				c.mu.Unlock()
+
 				select {
 				case c.workQueue <- tag:
 					lastPoll[tag.ID] = now
 
 				case <-ctx.Done():
+					c.mu.Lock()
+					delete(c.inFlight, key)
+					c.mu.Unlock()
 					return
 				}
 			}
