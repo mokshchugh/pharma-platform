@@ -1,10 +1,10 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
-	"net"
-	"strconv"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -21,39 +21,42 @@ func New(cfg Config) *Client {
 	}
 }
 
-func (c *Client) Connect() error {
+func (c *Client) Connect(ctx context.Context) error {
 	if c.db != nil {
 		return nil
 	}
 
-	host := net.JoinHostPort(
-		c.cfg.Host,
-		strconv.Itoa(c.cfg.Port),
-	)
-
 	dsn := fmt.Sprintf(
-		"postgres://%s:%s@%s/%s?sslmode=disable",
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		c.cfg.Host,
+		c.cfg.Port,
 		c.cfg.User,
 		c.cfg.Password,
-		host,
 		c.cfg.Database,
 	)
 
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		return fmt.Errorf("open postgres: %w", err)
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+
+		default:
+			db, err := sql.Open("postgres", dsn)
+			if err == nil {
+				if err := db.PingContext(ctx); err == nil {
+					db.SetMaxOpenConns(c.cfg.MaxOpenConns)
+					db.SetMaxIdleConns(c.cfg.MaxIdleConns)
+
+					c.db = db
+					return nil
+				}
+
+				_ = db.Close()
+			}
+
+			time.Sleep(time.Second)
+		}
 	}
-
-	db.SetMaxOpenConns(c.cfg.MaxOpenConns)
-	db.SetMaxIdleConns(c.cfg.MaxIdleConns)
-
-	if err := db.Ping(); err != nil {
-		return fmt.Errorf("ping postgres: %w", err)
-	}
-
-	c.db = db
-
-	return nil
 }
 
 func (c *Client) Close() error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"pharma-platform/internal/config"
 	"pharma-platform/internal/models"
 	"pharma-platform/internal/plc"
 )
@@ -16,14 +17,14 @@ type Collector struct {
 	workQueue chan models.Tag
 	samples   chan<- models.Sample
 
-	config Config
+	config config.CollectorConfig
 
 	wg sync.WaitGroup
 }
 
 func New(
 	driver plc.Driver,
-	config Config,
+	config config.CollectorConfig,
 	tags []models.Tag,
 	samples chan<- models.Sample,
 ) *Collector {

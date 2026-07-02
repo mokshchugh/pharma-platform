@@ -37,8 +37,8 @@ services:
     volumes:
       - ${DATA_ROOT}/questdb:/var/lib/questdb
 
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9000"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    # healthcheck:
+    #   test: ["CMD", "wget", "--spider", "-q", "http://localhost:9000"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 5

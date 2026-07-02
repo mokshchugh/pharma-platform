@@ -1,9 +1,11 @@
 package questdb
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strconv"
+	"time"
 )
 
 type Client struct {
@@ -19,7 +21,7 @@ func New(cfg Config) *Client {
 }
 
 // Connect establishes a TCP connection to QuestDB's ILP endpoint.
-func (c *Client) Connect() error {
+func (c *Client) Connect(ctx context.Context) error {
 	if c.conn != nil {
 		return nil
 	}
@@ -29,14 +31,25 @@ func (c *Client) Connect() error {
 		strconv.Itoa(c.cfg.Port),
 	)
 
-	conn, err := net.Dial("tcp", address)
-	if err != nil {
-		return fmt.Errorf("connect to questdb: %w", err)
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+
+		default:
+			conn, err := net.DialTimeout(
+				"tcp",
+				address,
+				5*time.Second,
+			)
+			if err == nil {
+				c.conn = conn
+				return nil
+			}
+
+			time.Sleep(time.Second)
+		}
 	}
-
-	c.conn = conn
-
-	return nil
 }
 
 // Close closes the QuestDB connection.

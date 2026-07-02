@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"pharma-platform/internal/aggregator"
 	"pharma-platform/internal/collector"
 	"pharma-platform/internal/config"
 	"pharma-platform/internal/models"
@@ -30,16 +31,11 @@ func main() {
 
 	samples := make(chan models.Sample, 100000)
 
-	plc := cfg.PLCs[0]
-
-	driver := opcua.New(opcua.NewConfig(plc))
+	driver := opcua.New(opcua.NewConfig(cfg.PLCs[0]))
 
 	collectorService := collector.New(
 		driver,
-		collector.Config{
-			Workers:   8,
-			QueueSize: 1000,
-		},
+		cfg.Collector,
 		cfg.Tags,
 		samples,
 	)
@@ -53,8 +49,13 @@ func main() {
 		},
 	)
 
+	if err := questClient.Connect(ctx); err != nil {
+		log.Fatal(err)
+	}
+
 	writer := questdb.NewWriter(
 		questClient,
+		"plc_samples",
 		samples,
 	)
 
@@ -70,7 +71,18 @@ func main() {
 		},
 	)
 
+	if err := postgresClient.Connect(ctx); err != nil {
+		log.Fatal(err)
+	}
 	defer postgresClient.Close()
+
+	aggregatorService := aggregator.New(
+		questClient,
+		postgres.NewWriter(postgresClient),
+		aggregator.Config{
+			Interval: cfg.Aggregator.Interval,
+		},
+	)
 
 	if err := collectorService.Start(ctx); err != nil {
 		log.Fatal(err)
@@ -81,6 +93,10 @@ func main() {
 			log.Fatal(err)
 		}
 	}()
+
+	if err := aggregatorService.Start(ctx); err != nil {
+		log.Fatal(err)
+	}
 
 	log.Println("Pharma Platform started.")
 
@@ -95,4 +111,5 @@ func main() {
 
 	collectorService.Stop()
 	writer.Stop()
+	aggregatorService.Stop()
 }

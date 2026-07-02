@@ -8,8 +8,8 @@ import (
 )
 
 type Writer struct {
-	client *Client
-
+	client  *Client
+	table   string
 	samples <-chan models.Sample
 
 	buffer []models.Sample
@@ -17,17 +17,18 @@ type Writer struct {
 
 func NewWriter(
 	client *Client,
+	table string,
 	samples <-chan models.Sample,
 ) *Writer {
 	return &Writer{
 		client:  client,
+		table:   table,
 		samples: samples,
-		buffer:  make([]models.Sample, 0, client.cfg.BatchSize),
 	}
 }
 
 func (w *Writer) Start(ctx context.Context) error {
-	if err := w.client.Connect(); err != nil {
+	if err := w.client.Connect(ctx); err != nil {
 		return err
 	}
 
@@ -39,7 +40,11 @@ func (w *Writer) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return w.flush()
 
-		case sample := <-w.samples:
+		case sample, ok := <-w.samples:
+			if !ok {
+				return w.flush()
+			}
+
 			w.buffer = append(w.buffer, sample)
 
 			if len(w.buffer) >= w.client.cfg.BatchSize {
@@ -77,7 +82,10 @@ func (w *Writer) flush() error {
 		return ErrNotConnected
 	}
 
-	data := encode(w.buffer)
+	data := encode(
+		w.table,
+		w.buffer,
+	)
 
 	if _, err := w.client.conn.Write([]byte(data)); err != nil {
 		return err

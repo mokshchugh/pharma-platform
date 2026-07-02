@@ -7,19 +7,76 @@ import (
 	"pharma-platform/internal/models"
 )
 
-func encode(samples []models.Sample) string {
+func encode(
+	table string,
+	samples []models.Sample,
+) string {
 	var b strings.Builder
 
 	for _, sample := range samples {
 		fmt.Fprintf(
 			&b,
-			"telemetry,plc=%s,tag=%s value=%v %d\n",
+			"%s,plc_id=%s,tag_id=%s value=%s,quality=%di %d\n",
+			table,
 			sample.PLCID,
 			sample.TagID,
-			sample.Value,
+			encodeValue(sample.Value),
+			sample.Quality,
 			sample.Timestamp.UnixNano(),
 		)
 	}
 
 	return b.String()
+}
+
+func encodeValue(value any) string {
+	switch v := value.(type) {
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+
+	case int:
+		return fmt.Sprintf("%di", v)
+
+	case int8:
+		return fmt.Sprintf("%di", v)
+
+	case int16:
+		return fmt.Sprintf("%di", v)
+
+	case int32:
+		return fmt.Sprintf("%di", v)
+
+	case int64:
+		return fmt.Sprintf("%di", v)
+
+	case uint:
+		return fmt.Sprintf("%di", v)
+
+	case uint8:
+		return fmt.Sprintf("%di", v)
+
+	case uint16:
+		return fmt.Sprintf("%di", v)
+
+	case uint32:
+		return fmt.Sprintf("%di", v)
+
+	case uint64:
+		return fmt.Sprintf("%di", v)
+
+	case float32:
+		return fmt.Sprintf("%f", v)
+
+	case float64:
+		return fmt.Sprintf("%f", v)
+
+	case string:
+		return fmt.Sprintf("\"%s\"", v)
+
+	default:
+		return fmt.Sprintf("\"%v\"", v)
+	}
 }

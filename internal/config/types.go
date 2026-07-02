@@ -25,6 +25,8 @@ type PlantConfig struct {
 
 // CollectorConfig contains runtime settings for the telemetry collector.
 type CollectorConfig struct {
+	Workers   int
+	QueueSize int
 }
 
 // APIConfig contains HTTP server configuration.
