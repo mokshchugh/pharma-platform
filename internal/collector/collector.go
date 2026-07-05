@@ -24,6 +24,9 @@ type Collector struct {
 
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
+
+	TickCount   int64
+	DispatchSum int64
 }
 
 func tagKey(tag models.Tag) string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,7 +29,10 @@ type Writer struct {
 	table   string
 	samples <-chan models.Sample
 
-	buffer []models.Sample
+	flushBuf chan []models.Sample
+	freeBuf  chan []models.Sample
+
+	wg sync.WaitGroup
 }
 
 func NewWriter(
@@ -36,11 +40,17 @@ func NewWriter(
 	table string,
 	samples <-chan models.Sample,
 ) *Writer {
-	return &Writer{
-		client:  client,
-		table:   table,
-		samples: samples,
+	w := &Writer{
+		client:   client,
+		table:    table,
+		samples:  samples,
+		flushBuf: make(chan []models.Sample, 2),
+		freeBuf:  make(chan []models.Sample, 3),
 	}
+	for i := 0; i < 3; i++ {
+		w.freeBuf <- make([]models.Sample, 0, client.cfg.BatchSize)
+	}
+	return w
 }
 
 func (w *Writer) Start(ctx context.Context) error {
@@ -56,7 +66,6 @@ func (w *Writer) Start(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return
-
 			case <-metricsTick.C:
 				n := writeCount.Swap(0)
 				log.Printf("QuestDB writes: %d samples/sec", n)
@@ -64,75 +73,102 @@ func (w *Writer) Start(ctx context.Context) error {
 		}
 	}()
 
+	w.wg.Add(2)
+	go w.accumulate(ctx)
+	go w.flushLoop()
+
+	return nil
+}
+
+func (w *Writer) Stop() error {
+	w.wg.Wait()
+	return w.client.Close()
+}
+
+func (w *Writer) accumulate(ctx context.Context) {
+	defer func() {
+		close(w.flushBuf)
+		w.wg.Done()
+	}()
+
+	buffer := <-w.freeBuf
+
 	flushTick := time.NewTicker(w.client.cfg.FlushInterval)
 	defer flushTick.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return w.flush(ctx)
+			if len(buffer) > 0 {
+				w.flushBuf <- buffer
+			}
+			return
 
 		case sample, ok := <-w.samples:
 			if !ok {
-				return w.flush(ctx)
+				if len(buffer) > 0 {
+					w.flushBuf <- buffer
+				}
+				return
 			}
 
-			w.buffer = append(w.buffer, sample)
+			buffer = append(buffer, sample)
 
-			if len(w.buffer) >= w.client.cfg.BatchSize {
-				if err := w.flush(ctx); err != nil {
-					log.Printf("questdb flush error: %v", err)
+			if len(buffer) >= w.client.cfg.BatchSize {
+				w.flushBuf <- buffer
+
+				select {
+				case buffer = <-w.freeBuf:
+				default:
+					buffer = make([]models.Sample, 0, w.client.cfg.BatchSize)
 				}
 			}
 
 		case <-flushTick.C:
-			if len(w.buffer) == 0 {
+			if len(buffer) == 0 {
 				continue
 			}
+			w.flushBuf <- buffer
 
-			if err := w.flush(ctx); err != nil {
-				log.Printf("questdb flush error: %v", err)
+			select {
+			case buffer = <-w.freeBuf:
+			default:
+				buffer = make([]models.Sample, 0, w.client.cfg.BatchSize)
 			}
 		}
 	}
 }
 
-func (w *Writer) Stop() error {
-	if err := w.flush(context.Background()); err != nil {
-		return err
-	}
+func (w *Writer) flushLoop() {
+	defer w.wg.Done()
 
-	return w.client.Close()
+	for buf := range w.flushBuf {
+		w.flushBuffer(buf)
+
+		select {
+		case w.freeBuf <- buf[:0]:
+		default:
+		}
+	}
 }
 
-func (w *Writer) flush(ctx context.Context) error {
-	if len(w.buffer) == 0 {
-		return nil
+func (w *Writer) flushBuffer(buf []models.Sample) {
+	if len(buf) == 0 {
+		return
 	}
 
-	if w.client.conn == nil {
-		return ErrNotConnected
-	}
-
-	data := encode(
-		w.table,
-		w.buffer,
-	)
+	data := encode(w.table, buf)
 
 	if err := writeAll(w.client.conn, []byte(data)); err != nil {
-
-		if err := w.client.reconnect(ctx); err != nil {
-			return err
+		if err := w.client.reconnect(context.Background()); err != nil {
+			log.Printf("questdb flush error: %v", err)
+			return
 		}
-
 		if err := writeAll(w.client.conn, []byte(data)); err != nil {
-			return err
+			log.Printf("questdb flush error: %v", err)
+			return
 		}
 	}
 
-	writeCount.Add(uint64(len(w.buffer)))
-
-	w.buffer = w.buffer[:0]
-
-	return nil
+	writeCount.Add(uint64(len(buf)))
 }

@@ -26,7 +26,7 @@ func (c *Collector) runScheduler(ctx context.Context) {
 
 				key := tagKey(tag)
 
-				if now.Sub(lastPoll[key]) < tag.PollInterval {
+				if now.Sub(lastPoll[key]) < tag.PollInterval-2*time.Millisecond {
 					continue
 				}
 

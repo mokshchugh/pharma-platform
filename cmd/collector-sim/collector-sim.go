@@ -107,5 +107,5 @@ func main() {
 	cancel()
 	c.Stop()
 	close(samples)
-	client.Close()
+	writer.Stop()
 }
