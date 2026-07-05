@@ -7,6 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
+
+	"pharma-platform/internal/models"
 )
 
 type Reader struct {
@@ -27,7 +30,6 @@ func (r *Reader) Query(
 	ctx context.Context,
 	query string,
 ) (*queryResponse, error) {
-
 	endpoint := fmt.Sprintf(
 		"http://%s:%d/exec?query=%s",
 		r.client.cfg.Host,
@@ -67,10 +69,85 @@ func (r *Reader) Query(
 
 func (r *Reader) Latest(
 	ctx context.Context,
-) (*queryResponse, error) {
-
-	return r.Query(
+) ([]models.Sample, error) {
+	result, err := r.Query(
 		ctx,
 		`SELECT * FROM plc_samples LATEST ON timestamp PARTITION BY plc_id, tag_id`,
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	return decodeSamples(result.Dataset)
+}
+
+func (r *Reader) History(
+	ctx context.Context,
+	plcID string,
+	tagID string,
+	start time.Time,
+	end time.Time,
+) ([]models.Sample, error) {
+	query := fmt.Sprintf(`
+SELECT *
+FROM plc_samples
+WHERE plc_id = '%s'
+  AND tag_id = '%s'
+  AND timestamp BETWEEN '%s' AND '%s'
+ORDER BY timestamp;
+`,
+		plcID,
+		tagID,
+		start.UTC().Format(time.RFC3339Nano),
+		end.UTC().Format(time.RFC3339Nano),
+	)
+
+	result, err := r.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	return decodeSamples(result.Dataset)
+}
+
+func decodeSamples(
+	dataset [][]any,
+) ([]models.Sample, error) {
+	samples := make(
+		[]models.Sample,
+		0,
+		len(dataset),
+	)
+
+	for _, row := range dataset {
+		if len(row) != 5 {
+			return nil, fmt.Errorf(
+				"unexpected QuestDB row length: %d",
+				len(row),
+			)
+		}
+
+		timestamp, err := time.Parse(
+			time.RFC3339Nano,
+			row[0].(string),
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		samples = append(
+			samples,
+			models.Sample{
+				Timestamp: timestamp,
+				PLCID:     row[1].(string),
+				TagID:     row[2].(string),
+				Value:     row[3].(float64),
+				Quality: models.Quality(
+					uint8(row[4].(float64)),
+				),
+			},
+		)
+	}
+
+	return samples, nil
 }

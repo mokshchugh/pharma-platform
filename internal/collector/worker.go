@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"log"
 )
 
 func (c *Collector) runWorker(ctx context.Context) {
@@ -23,6 +24,12 @@ func (c *Collector) runWorker(ctx context.Context) {
 			c.mu.Unlock()
 
 			if err != nil {
+				log.Printf(
+					"read tag %s/%s: %v",
+					tag.PLCID,
+					tag.ID,
+					err,
+				)
 				continue
 			}
 

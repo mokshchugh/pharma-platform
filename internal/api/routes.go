@@ -19,5 +19,10 @@ func routes(
 		telemetry.Latest,
 	)
 
+	r.Get(
+		"/telemetry/history",
+		telemetry.History,
+	)
+
 	return r
 }

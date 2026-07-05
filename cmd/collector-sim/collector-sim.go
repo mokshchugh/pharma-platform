@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"pharma-platform/internal/collector"
@@ -40,7 +43,8 @@ func (m *MockDriver) Read(
 }
 
 func main() {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	samples := make(chan models.Sample, 100000)
 
@@ -61,7 +65,7 @@ func main() {
 
 	go func() {
 		if err := writer.Start(ctx); err != nil {
-			log.Fatal(err)
+			log.Printf("questdb writer stopped: %v", err)
 		}
 	}()
 
@@ -95,5 +99,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	select {}
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+
+	log.Println("shutting down...")
+	cancel()
+	c.Stop()
+	close(samples)
+	client.Close()
 }

@@ -22,7 +22,8 @@ type Collector struct {
 	inFlight map[string]bool
 	mu       sync.Mutex
 
-	wg sync.WaitGroup
+	wg     sync.WaitGroup
+	cancel context.CancelFunc
 }
 
 func tagKey(tag models.Tag) string {
@@ -51,6 +52,8 @@ func (c *Collector) Start(ctx context.Context) error {
 		return err
 	}
 
+	ctx, c.cancel = context.WithCancel(ctx)
+
 	c.wg.Add(1)
 	go c.runScheduler(ctx)
 
@@ -64,6 +67,10 @@ func (c *Collector) Start(ctx context.Context) error {
 
 // Stop stops the collector.
 func (c *Collector) Stop() error {
+	if c.cancel != nil {
+		c.cancel()
+	}
+
 	c.wg.Wait()
 
 	return c.driver.Close()

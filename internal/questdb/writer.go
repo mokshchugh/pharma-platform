@@ -2,10 +2,26 @@ package questdb
 
 import (
 	"context"
+	"log"
+	"net"
+	"sync/atomic"
 	"time"
 
 	"pharma-platform/internal/models"
 )
+
+var writeCount atomic.Uint64
+
+func writeAll(conn net.Conn, data []byte) error {
+	for len(data) > 0 {
+		n, err := conn.Write(data)
+		if err != nil {
+			return err
+		}
+		data = data[n:]
+	}
+	return nil
+}
 
 type Writer struct {
 	client  *Client
@@ -32,8 +48,24 @@ func (w *Writer) Start(ctx context.Context) error {
 		return err
 	}
 
-	ticker := time.NewTicker(w.client.cfg.FlushInterval)
-	defer ticker.Stop()
+	go func() {
+		metricsTick := time.NewTicker(time.Second)
+		defer metricsTick.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+
+			case <-metricsTick.C:
+				n := writeCount.Swap(0)
+				log.Printf("QuestDB writes: %d samples/sec", n)
+			}
+		}
+	}()
+
+	flushTick := time.NewTicker(w.client.cfg.FlushInterval)
+	defer flushTick.Stop()
 
 	for {
 		select {
@@ -49,17 +81,17 @@ func (w *Writer) Start(ctx context.Context) error {
 
 			if len(w.buffer) >= w.client.cfg.BatchSize {
 				if err := w.flush(ctx); err != nil {
-					return err
+					log.Printf("questdb flush error: %v", err)
 				}
 			}
 
-		case <-ticker.C:
+		case <-flushTick.C:
 			if len(w.buffer) == 0 {
 				continue
 			}
 
 			if err := w.flush(ctx); err != nil {
-				return err
+				log.Printf("questdb flush error: %v", err)
 			}
 		}
 	}
@@ -87,16 +119,18 @@ func (w *Writer) flush(ctx context.Context) error {
 		w.buffer,
 	)
 
-	if _, err := w.client.conn.Write([]byte(data)); err != nil {
+	if err := writeAll(w.client.conn, []byte(data)); err != nil {
 
 		if err := w.client.reconnect(ctx); err != nil {
 			return err
 		}
 
-		if _, err := w.client.conn.Write([]byte(data)); err != nil {
+		if err := writeAll(w.client.conn, []byte(data)); err != nil {
 			return err
 		}
 	}
+
+	writeCount.Add(uint64(len(w.buffer)))
 
 	w.buffer = w.buffer[:0]
 

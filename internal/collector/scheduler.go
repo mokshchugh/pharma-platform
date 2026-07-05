@@ -24,13 +24,13 @@ func (c *Collector) runScheduler(ctx context.Context) {
 					continue
 				}
 
-				if now.Sub(lastPoll[tag.ID]) < tag.PollInterval {
+				key := tagKey(tag)
+
+				if now.Sub(lastPoll[key]) < tag.PollInterval {
 					continue
 				}
 
 				c.mu.Lock()
-
-				key := tagKey(tag)
 
 				if c.inFlight[key] {
 					c.mu.Unlock()
@@ -42,7 +42,7 @@ func (c *Collector) runScheduler(ctx context.Context) {
 
 				select {
 				case c.workQueue <- tag:
-					lastPoll[tag.ID] = now
+					lastPoll[key] = now
 
 				case <-ctx.Done():
 					c.mu.Lock()
