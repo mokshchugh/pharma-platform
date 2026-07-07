@@ -7,31 +7,49 @@ import (
 	"pharma-platform/internal/collector"
 )
 
-type CollectorHandler struct {
-	collector *collector.Collector
+type CollectorHandle interface {
+	IsPaused() bool
+	Pause()
+	Resume()
+	TickCount() int64
+	DispatchSum() int64
 }
 
-func NewCollectorHandler(c *collector.Collector) *CollectorHandler {
-	return &CollectorHandler{collector: c}
+type CollectorAdapter struct {
+	C *collector.Collector
+}
+
+func (a *CollectorAdapter) IsPaused() bool      { return a.C.IsPaused() }
+func (a *CollectorAdapter) Pause()               { a.C.Pause() }
+func (a *CollectorAdapter) Resume()              { a.C.Resume() }
+func (a *CollectorAdapter) TickCount() int64     { return a.C.TickCount }
+func (a *CollectorAdapter) DispatchSum() int64   { return a.C.DispatchSum }
+
+type CollectorHandler struct {
+	handle CollectorHandle
+}
+
+func NewCollectorHandler(handle CollectorHandle) *CollectorHandler {
+	return &CollectorHandler{handle: handle}
 }
 
 func (h *CollectorHandler) Status(w http.ResponseWriter, r *http.Request) {
 	status := "running"
-	if h.collector.IsPaused() {
+	if h.handle.IsPaused() {
 		status = "paused"
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":       status,
-		"paused":       h.collector.IsPaused(),
-		"tick_count":   h.collector.TickCount,
-		"dispatch_sum": h.collector.DispatchSum,
+		"paused":       h.handle.IsPaused(),
+		"tick_count":   h.handle.TickCount(),
+		"dispatch_sum": h.handle.DispatchSum(),
 	})
 }
 
 func (h *CollectorHandler) Pause(w http.ResponseWriter, r *http.Request) {
-	h.collector.Pause()
+	h.handle.Pause()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -39,7 +57,7 @@ func (h *CollectorHandler) Pause(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *CollectorHandler) Resume(w http.ResponseWriter, r *http.Request) {
-	h.collector.Resume()
+	h.handle.Resume()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

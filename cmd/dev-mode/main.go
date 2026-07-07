@@ -118,7 +118,8 @@ func main() {
 	telemetryHandler := handlers.NewTelemetryHandler(reader)
 	plcHandler := handlers.NewPLCHandler(plcStore)
 	tagHandler := handlers.NewTagHandler(plcStore)
-	collectorHandler := handlers.NewCollectorHandler(collectorService)
+	collectorAdapter := &handlers.CollectorAdapter{C: collectorService}
+	collectorHandler := handlers.NewCollectorHandler(collectorAdapter)
 	alarmHandler := handlers.NewAlarmHandler(alarmStore)
 	systemHandler := handlers.NewSystemHandler(plcStore, alarmStore, collectorService)
 
