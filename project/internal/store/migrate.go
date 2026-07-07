@@ -61,16 +61,13 @@ func runSQLFiles(db *sql.DB, dir string) error {
 			return fmt.Errorf("read %s: %w", path, err)
 		}
 
-		statements := strings.Split(string(content), ";")
-		for _, stmt := range statements {
-			stmt = strings.TrimSpace(stmt)
-			if stmt == "" {
-				continue
-			}
+		stmt := strings.TrimSpace(string(content))
+		if stmt == "" {
+			continue
+		}
 
-			if _, err := db.Exec(stmt); err != nil {
-				return fmt.Errorf("exec %s: %w (stmt: %.100s)", entry.Name(), err, stmt)
-			}
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("exec %s: %w", entry.Name(), err)
 		}
 	}
 
