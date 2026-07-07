@@ -1,20 +1,16 @@
-# Environment
-.env
-
-# Persistent storage (bind-mounted docker volumes)
-persistent/
+# Persistent storage contents (skeleton tracked, data ignored)
 persistent/postgres/
 persistent/questdb/
 
 # Logs
-runtime/logs/
+logs/
 
 # Go
 *.exe
 *.test
 coverage.out
 
-# Build artifacts from cmd/
+# Build artifacts
 /pharma-platform
 /collector-sim
 /quest-simulator
@@ -23,6 +19,6 @@ coverage.out
 # Node
 node_modules/
 
-# Python (if we ever add it)
+# Python
 __pycache__/
 *.pyc

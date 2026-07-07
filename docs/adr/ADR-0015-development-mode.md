@@ -6,89 +6,54 @@
 
 ## Context
 
-The production platform (`cmd/pharma-platform/main.go`) requires PostgreSQL and QuestDB databases, machine and tag configuration loaded from PostgreSQL, and real PLC drivers that connect to physical equipment.
-
-During development, no real PLCs are available. Developers need a self-contained environment with simulated data.
+The production platform requires PostgreSQL and QuestDB databases. During development, no real PLCs are available.
 
 ## Decision
 
-Create three development entry points:
+Four development entry points under `project/cmd/`:
 
-### 1. `cmd/dev-mode/main.go` — All-in-one development
-
-Runs migrations, seeds the database, starts a mock collector, writer, and API server in a single process:
-
-```
-dev-mode
-    ├── PostgreSQL migration + seed (machines + tags from SQL files)
-    ├── QuestDB migration (tables)
-    ├── mockDriver (generates sine-wave values for all 128 tags)
-    ├── Collector (reads tags from PostgreSQL DB via MachineStore/TagStore)
-    ├── questdb.Writer (batch ILP to QuestDB)
-    └── API server with embedded dashboard
-```
+### 1. `cmd/dev-mode/main.go` — All-in-one dev
+Runs migrations + seed + mock collector + writer + API in one process. Tags loaded from PostgreSQL via MachineStore/TagStore.
 
 ### 2. `cmd/api/main.go` — Standalone API + dashboard
-
-Runs migrations, seeds the database, starts the API server with a no-op collector. No data is generated — the dashboard shows the machine/tag list but no live telemetry.
+Migrations + seed + API with no-op collector. No data generation.
 
 ### 3. `cmd/collector-sim/main.go` — Standalone simulator
-
-Reads tags from PostgreSQL, runs QuestDB migrations, and writes mock data to QuestDB. No API server or dashboard. Useful for generating test data while iterating on the dashboard or API.
+Reads tags from PostgreSQL, writes mock data to QuestDB.
 
 ### 4. `cmd/seed/main.go` — Standalone seed
+Runs PostgreSQL schema + seed SQL files.
 
-Runs PostgreSQL migrations and seeds the database with machines and tags. Useful after a fresh database reset.
+All accessed via root `Makefile`:
+```bash
+make up     # start postgres + questdb
+make seed   # seed database
+make dev    # run all-in-one dev mode
+make api    # run dashboard only
+make sim    # run simulator
+```
 
 ## Architecture
 
 ```
-cmd/dev-mode/main.go
+Makefile (root)
     │
-    ├── config.Load("config/bootstrap.yaml")
-    ├── postgres.Connect → store.MigratePostgres(schema + seed)
-    ├── questdb.Connect → store.MigrateQuestDB(tables)
-    ├── store.NewMachineStore(postgresClient) → PLCStore
-    ├── store.NewTagStore(postgresClient) → TagStore
-    ├── questdb.NewWriter → QuestDB ILP
-    ├── api.NewFull → HTTP server
-    ├── Collector pause/resume via SIGUSR1/SIGUSR2
-    └── Graceful shutdown
+    ├── make up → docker compose -f project/runtime/docker-compose.yml up
+    ├── make dev → cd project && go run cmd/dev-mode/main.go
+    └── make sim → cd project && go run cmd/collector-sim/main.go
 ```
 
 ## Mock Driver
 
-The mock driver reads tags from the database and generates realistic-looking sine-wave data:
-
-```go
-base = 42.0  // or 100.0 for integers, 1.0 for booleans
-value = base + sin(time) * 10.0
-```
-
-## Alternatives Considered
-
-### Hardcoded Mock PLCs (Previous approach)
-
-Previously dev-mode hardcoded 3 PLCs with 25 tags each (75 total). This was replaced with DB-backed tags so:
-
-- The same mock driver works with the full 128-tag inventory
-- Tag metadata (units, scale factors, data types) comes from the real schema
-- Changes to the inventory automatically flow to dev-mode
-
-### Mock YAML Files
-
-Requires maintaining separate mock configuration files. Rejected in favor of DB-backed approach.
+Generates sine-wave data for all 128 tags loaded from PostgreSQL. Data types (bool, int16, int32, float32) are respected with appropriate base values.
 
 ## Consequences
 
 ### Positive
-
-* Zero configuration — bootstrap.yaml is the only config file
-* All 11 machines and 128 tags from the real inventory are available in dev
-* Same store interfaces used in production and development
-* Simulator can generate data independently of the API
+* Zero configuration — `make up && make dev` starts everything
+* All 11 machines and 128 tags available
+* Same store interfaces in production and development
 
 ### Negative
-
-* Requires PostgreSQL running locally (or via docker compose)
+* Requires PostgreSQL running locally
 * Wiring duplicated across four binaries

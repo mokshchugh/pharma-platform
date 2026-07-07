@@ -8,38 +8,36 @@
 
 ---
 
-# 1. Introduction
+# 1. Technology Stack
 
-## 1.1 Purpose
-
-This document defines the software architecture, requirements, and design decisions for an Industrial Data Acquisition Platform intended for deployment in pharmaceutical manufacturing facilities.
-
----
-
-# 2. Technology Stack
-
-## Backend
-* Go
-
-## Databases
+* Go (module root at `project/`)
 * QuestDB (time-series telemetry)
 * PostgreSQL (persistent configuration and business data)
+* Vanilla HTML/JS dashboard (embedded)
+* Docker + Docker Compose
 
-## Frontend
-* Vanilla HTML/JS/CSS (embedded via `//go:embed`)
+# 2. Repository Layout
 
-## Infrastructure
-* Docker
-* Docker Compose
-
----
+```
+pharma-platform/
+├── project/              # Go module root
+│   ├── cmd/              # Entry points (5 binaries)
+│   ├── internal/         # All Go packages
+│   ├── config/           # bootstrap.yaml
+│   ├── deploy/           # SQL migrations
+│   ├── runtime/          # Docker files + compose
+│   ├── go.mod
+│   └── go.sum
+├── persistent/           # Docker bind-mount volumes
+├── docs/                 # ADRs, SRS, roadmap
+├── Makefile              # Developer commands
+└── .gitignore
+```
 
 # 3. High-Level Architecture
 
 ```
                   Users
-                     |
-              HTTPS / TLS
                      |
                 Go API Server
           ┌──────────┴──────────┐
@@ -54,114 +52,51 @@ This document defines the software architecture, requirements, and design decisi
         PLC Network
 ```
 
-## Database Responsibilities
+# 4. Database Responsibilities
 
-### QuestDB
-- Raw telemetry (`plc_samples`)
-- Time-series events (`alarms`, `events`, `logs`)
-- High-frequency sensor values
+### QuestDB (project/deploy/questdb/init/)
+- `plc_samples` — raw telemetry
+- `alarms` — alarm events
+- `events` — batch and machine events
+- `logs` — system logs
 
-### PostgreSQL
-- Machine registry (`machines` table)
-- Tag definitions (`tags` table)
-- Users, roles, permissions (future)
-- Batch information (future)
-- Aggregated KPIs (future)
+### PostgreSQL (project/deploy/postgres/init/)
+- `machines` — PLC inventory
+- `tags` — tag definitions per machine
+- `users`, `roles` (future)
 
----
+# 5. Entry Points (project/cmd/)
 
-# 4. Core Components
+| Binary | Postgres | QuestDB | Seed | Collector | API |
+|---|---|---|---|---|---|
+| `pharma-platform` | Schema | Tables | No | Idle | Yes |
+| `dev-mode` | Schema+Seed | Tables | If empty | Mock | Yes |
+| `api` | Schema+Seed | Tables | If empty | Stub | Yes |
+| `collector-sim` | Read tags | Tables | No | Mock→QuestDB | No |
+| `seed` | Schema+Seed | No | Always | No | No |
 
-## Entry Points
+All invoked via `make` from the repository root.
 
-| Binary | Purpose | Postgres | QuestDB | Seed | Collector | API |
-|---|---|---|---|---|---|---|
-| `cmd/pharma-platform` | Production | Schema | Tables | No | Idle | Yes |
-| `cmd/dev-mode` | Development | Schema+Seed | Tables | If empty | Mock | Yes |
-| `cmd/api` | Dashboard only | Schema+Seed | Tables | If empty | Stub | Yes |
-| `cmd/collector-sim` | Simulator | Read tags | Tables | No | Mock→QuestDB | No |
-| `cmd/seed` | Standalone seed | Schema+Seed | No | Always | No | No |
+# 6. Configuration
 
-## Configuration
-
-Single `config/bootstrap.yaml` contains all settings:
+Single file: `project/config/bootstrap.yaml`
 
 ```yaml
-postgres:    # Connection + pool config
-questdb:     # Connection + batch config
-api:         # HTTP server host/port
-collector:   # Workers, queue size
-aggregator:  # Aggregation interval
-plant:       # Name, location, timezone
+postgres:    # host, port, database, user, password
+questdb:     # host, port, batch_size, flush_interval
+api:         # host, port
+collector:   # workers, queue_size
+aggregator:  # interval
+plant:       # name, location, timezone
 ```
 
----
-
-# 5. Data Flow
-
-```
-Seed Flow (dev-mode, api, seed):
-    deploy/postgres/init/001_schema.sql
-    → PostgreSQL (machines + tags tables)
-    → deploy/postgres/init/002_seed_machines.sql
-    → deploy/postgres/init/003_seed_tags.sql
-
-Migration Flow (all binaries):
-    deploy/questdb/init/001_plc_samples.sql
-    → QuestDB REST /exec
-    → deploy/questdb/init/002_events.sql
-
-Read Flow (all binaries with API):
-    Frontend → API → QuestDB REST (telemetry)
-    Frontend → API → PostgreSQL (machines, tags)
-```
-
----
-
-# 6. Repository Pattern
-
-```
-HTTP Handler (internal/api/handlers/)
-    ↓
-Store Interface (PLCStore, TagStore)
-    ↓
-PostgreSQL Implementation (internal/store/)
-    ↓
-Database
-```
-
----
-
-# 7. Deployment Model
-
-```yaml
-services:
-  postgres:  # official postgres:17-alpine
-  questdb:   # official questdb:9.1.0
-  app:       # built from runtime/docker/Dockerfile
-```
-
-Persistent storage in `persistent/` (gitignored, bind-mounted).
-
----
-
-# 8. Non-Functional Requirements
-
-- 24×7 operation
-- Continuous telemetry ingestion
-- Automatic restart via Docker
-- Health monitoring
-- Modular services
-
----
-
-# 9. Current Design Decisions (ADR Summary)
+# 7. Current Design Decisions (ADR Summary)
 
 1. ADR-0001: QuestDB for time-series
 2. ADR-0002: Go for backend
 3. ADR-0003: PostgreSQL for business data
-4. ADR-0004: `persistent/` directory for data
-5. ADR-0005: Docker Compose at `runtime/docker-compose.yml`
+4. ADR-0004: `persistent/` directory, `project/` for go module
+5. ADR-0005: Docker Compose at `project/runtime/docker-compose.yml`
 6. ADR-0007: Protocol-agnostic PLC driver interface
 7. ADR-0008: Collector with scheduler + worker pool
 8. ADR-0011: 18-endpoint REST API
@@ -170,3 +105,4 @@ Persistent storage in `persistent/` (gitignored, bind-mounted).
 11. ADR-0014: Collector pause/resume
 12. ADR-0015: Dev-mode with DB-backed mock data
 13. ADR-0016: PostgreSQL store for machines and tags
+14. ADR-0017: Bootstrap configuration

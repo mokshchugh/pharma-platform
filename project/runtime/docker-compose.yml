@@ -12,7 +12,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ../persistent/postgres:/var/lib/postgresql/data
+      - ../../persistent/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -28,7 +28,7 @@ services:
       - "8812:8812"
       - "9009:9009"
     volumes:
-      - ../persistent/questdb:/var/lib/questdb
+      - ../../persistent/questdb:/var/lib/questdb
 
   app:
     build:

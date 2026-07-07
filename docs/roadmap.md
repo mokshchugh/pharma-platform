@@ -2,7 +2,7 @@
 
 ## Phase 1 — Core Models & Configuration (done)
 - [x] Domain models (PLC, Tag, Sample, DataType, Quality)
-- [x] Bootstrap configuration (YAML → single bootstrap.yaml)
+- [x] Bootstrap configuration (project/config/bootstrap.yaml)
 - [x] Config validation
 
 ## Phase 2 — Storage Layer (done)
@@ -14,9 +14,10 @@
 - [x] PostgreSQL-backed TagStore (implements TagStore interface)
 
 ## Phase 3 — Infrastructure (done)
-- [x] Docker Compose (postgres + questdb + app)
-- [x] Dockerfile (multi-stage Go build)
-- [x] Persistent storage (bind mounts to persistent/)
+- [x] Docker Compose (project/runtime/docker-compose.yml)
+- [x] Dockerfile (project/runtime/docker/Dockerfile)
+- [x] Persistent storage (persistent/, bind mounts)
+- [x] Makefile (root, wraps all commands)
 
 ## Phase 4 — Collector (done)
 - [x] Collector architecture (scheduler + worker pool)
