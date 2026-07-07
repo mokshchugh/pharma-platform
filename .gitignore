@@ -12,6 +12,12 @@ logs/
 *.test
 coverage.out
 
+# Build artifacts from cmd/
+/pharma-platform
+/collector-sim
+/quest-simulator
+/dev-mode
+
 # Node
 node_modules/
 

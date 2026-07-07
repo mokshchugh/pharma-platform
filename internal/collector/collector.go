@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"pharma-platform/internal/config"
 	"pharma-platform/internal/models"
@@ -27,6 +28,20 @@ type Collector struct {
 
 	TickCount   int64
 	DispatchSum int64
+
+	paused atomic.Bool
+}
+
+func (c *Collector) Pause() {
+	c.paused.Store(true)
+}
+
+func (c *Collector) Resume() {
+	c.paused.Store(false)
+}
+
+func (c *Collector) IsPaused() bool {
+	return c.paused.Load()
 }
 
 func tagKey(tag models.Tag) string {

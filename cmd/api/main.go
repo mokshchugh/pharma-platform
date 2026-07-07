@@ -49,7 +49,7 @@ func main() {
 		reader,
 	)
 
-	server := api.New(
+	server := api.NewTelemetryOnly(
 		cfg,
 		telemetry,
 	)

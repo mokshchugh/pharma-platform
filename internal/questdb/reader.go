@@ -81,6 +81,55 @@ func (r *Reader) Latest(
 	return decodeSamples(result.Dataset)
 }
 
+func (r *Reader) LatestByPLC(
+	ctx context.Context,
+	plcID string,
+) ([]models.Sample, error) {
+	query := fmt.Sprintf(
+		`SELECT * FROM plc_samples WHERE plc_id = '%s' LATEST ON timestamp PARTITION BY tag_id`,
+		plcID,
+	)
+
+	result, err := r.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	return decodeSamples(result.Dataset)
+}
+
+func (r *Reader) LatestByPLCAndTag(
+	ctx context.Context,
+	plcID string,
+	tagID string,
+) (*models.Sample, error) {
+	query := fmt.Sprintf(`
+SELECT timestamp, plc_id, tag_id, value, quality
+FROM plc_samples
+WHERE plc_id = '%s' AND tag_id = '%s'
+ORDER BY timestamp DESC
+LIMIT 1`,
+		plcID,
+		tagID,
+	)
+
+	result, err := r.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(result.Dataset) == 0 {
+		return nil, nil
+	}
+
+	samples, err := decodeSamples(result.Dataset)
+	if err != nil {
+		return nil, err
+	}
+
+	return &samples[0], nil
+}
+
 func (r *Reader) History(
 	ctx context.Context,
 	plcID string,
@@ -108,6 +157,43 @@ ORDER BY timestamp;
 	}
 
 	return decodeSamples(result.Dataset)
+}
+
+type AggregateSample struct {
+	Timestamp time.Time `json:"timestamp"`
+	Avg       float64   `json:"avg"`
+	Min       float64   `json:"min"`
+	Max       float64   `json:"max"`
+}
+
+func (r *Reader) Aggregate(
+	ctx context.Context,
+	plcID string,
+	tagID string,
+	interval string,
+	start time.Time,
+	end time.Time,
+) ([]AggregateSample, error) {
+	query := fmt.Sprintf(`
+SELECT timestamp, avg(value), min(value), max(value)
+FROM plc_samples
+WHERE plc_id = '%s'
+  AND tag_id = '%s'
+  AND timestamp BETWEEN '%s' AND '%s'
+SAMPLE BY %s`,
+		plcID,
+		tagID,
+		start.UTC().Format(time.RFC3339Nano),
+		end.UTC().Format(time.RFC3339Nano),
+		interval,
+	)
+
+	result, err := r.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	return decodeAggregate(result.Dataset)
 }
 
 func decodeSamples(
@@ -147,6 +233,32 @@ func decodeSamples(
 				),
 			},
 		)
+	}
+
+	return samples, nil
+}
+
+func decodeAggregate(
+	dataset [][]any,
+) ([]AggregateSample, error) {
+	samples := make([]AggregateSample, 0, len(dataset))
+
+	for _, row := range dataset {
+		if len(row) != 4 {
+			continue
+		}
+
+		timestamp, err := time.Parse(time.RFC3339Nano, row[0].(string))
+		if err != nil {
+			return nil, err
+		}
+
+		samples = append(samples, AggregateSample{
+			Timestamp: timestamp,
+			Avg:       row[1].(float64),
+			Min:       row[2].(float64),
+			Max:       row[3].(float64),
+		})
 	}
 
 	return samples, nil

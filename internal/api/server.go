@@ -13,23 +13,24 @@ type Server struct {
 	http *http.Server
 }
 
-func New(
-	cfg config.APIConfig,
-	telemetry *handlers.TelemetryHandler,
-) *Server {
-
-	addr := fmt.Sprintf(
-		"%s:%d",
-		cfg.Host,
-		cfg.Port,
-	)
+func NewFull(cfg config.APIConfig, h *Handlers) *Server {
+	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 
 	return &Server{
 		http: &http.Server{
-			Addr: addr,
-			Handler: routes(
-				telemetry,
-			),
+			Addr:    addr,
+			Handler: Routes(h),
+		},
+	}
+}
+
+func NewTelemetryOnly(cfg config.APIConfig, telemetry *handlers.TelemetryHandler) *Server {
+	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+
+	return &Server{
+		http: &http.Server{
+			Addr:    addr,
+			Handler: routesTelemetryOnly(telemetry),
 		},
 	}
 }

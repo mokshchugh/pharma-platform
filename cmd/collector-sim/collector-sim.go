@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"os/signal"
 	"syscall"
@@ -32,12 +33,12 @@ func (m *MockDriver) Read(
 	ctx context.Context,
 	tag models.Tag,
 ) (models.Sample, error) {
-
+	val := 42.0 + math.Sin(float64(time.Now().UnixMilli())/1000.0)*10.0
 	return models.Sample{
 		Timestamp: time.Now(),
 		PLCID:     tag.PLCID,
 		TagID:     tag.ID,
-		Value:     42.0,
+		Value:     val,
 		Quality:   models.QualityGood,
 	}, nil
 }
@@ -45,6 +46,31 @@ func (m *MockDriver) Read(
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	plcNames := []struct {
+		id   string
+		name string
+	}{
+		{"plc-1", "Fluid Bed Dryer"},
+		{"plc-2", "Tablet Press"},
+		{"plc-3", "HVAC System"},
+	}
+
+	tags := make([]models.Tag, 0, len(plcNames)*25)
+	for _, p := range plcNames {
+		for i := range 25 {
+			tagID := fmt.Sprintf("%s-tag-%02d", p.id, i)
+			tags = append(tags, models.Tag{
+				ID:           tagID,
+				PLCID:        p.id,
+				Name:         fmt.Sprintf("%s Tag %d", p.name, i),
+				Address:      fmt.Sprintf("mock://%s/%d", p.id, i),
+				DataType:     models.DataTypeFloat64,
+				PollInterval: 100 * time.Millisecond,
+				Enabled:      true,
+			})
+		}
+	}
 
 	samples := make(chan models.Sample, 100000)
 
@@ -74,20 +100,6 @@ func main() {
 		QueueSize: 10000,
 	}
 
-	tags := make([]models.Tag, 1000)
-
-	for i := range tags {
-		tags[i] = models.Tag{
-			ID:           fmt.Sprintf("tag-%d", i),
-			PLCID:        "plc-1",
-			Name:         fmt.Sprintf("Tag %d", i),
-			Address:      "mock",
-			DataType:     models.DataTypeFloat64,
-			PollInterval: 100 * time.Millisecond,
-			Enabled:      true,
-		}
-	}
-
 	c := collector.New(
 		&MockDriver{},
 		cfg,
@@ -99,13 +111,31 @@ func main() {
 		log.Fatal(err)
 	}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	log.Println("collector-sim started · 3 PLCs · 75 tags · SIGUSR1=pause · SIGUSR2=resume · Ctrl+C=stop")
 
-	log.Println("shutting down...")
-	cancel()
-	c.Stop()
-	close(samples)
-	writer.Stop()
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR1, syscall.SIGUSR2)
+
+	for {
+		s := <-sigCh
+
+		switch s {
+		case syscall.SIGUSR1:
+			c.Pause()
+			log.Println("collector paused")
+
+		case syscall.SIGUSR2:
+			c.Resume()
+			log.Println("collector resumed")
+
+		default:
+			log.Println("shutting down...")
+
+			c.Stop()
+			close(samples)
+			writer.Stop()
+			cancel()
+			return
+		}
+	}
 }

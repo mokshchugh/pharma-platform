@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pharma Platform</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f5f5f5;color:#333}
+nav{background:#1a237e;padding:0 24px;display:flex;align-items:center;height:56px;gap:32px}
+nav h1{color:#fff;font-size:18px;font-weight:600}
+nav a{color:#9fa8da;text-decoration:none;font-size:14px;padding:18px 0;border-bottom:2px solid transparent;cursor:pointer}
+nav a.active{color:#fff;border-bottom-color:#fff}
+nav a:hover{color:#fff}
+.container{max-width:1200px;margin:0 auto;padding:24px}
+.card{background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:24px;margin-bottom:24px}
+.card h2{font-size:18px;margin-bottom:16px;color:#1a237e}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+.stat{background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:20px;text-align:center}
+.stat .value{font-size:32px;font-weight:700;margin:8px 0}
+.stat .label{font-size:13px;color:#666}
+.stat .value.ok{color:#2e7d32}
+.stat .value.warning{color:#f57f17}
+.stat .value.critical{color:#c62828}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #e0e0e0}
+th{background:#f5f5f5;font-weight:600;color:#555;font-size:13px;text-transform:uppercase}
+tr:hover{background:#fafafa}
+.clickable{cursor:pointer;color:#1565c0}
+.clickable:hover{text-decoration:underline}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:10px 20px;border:none;border-radius:6px;font-size:14px;font-weight:500;cursor:pointer;transition:background .15s}
+.btn-primary{background:#1a237e;color:#fff}
+.btn-primary:hover{background:#283593}
+.btn-primary:disabled{background:#9fa8da;cursor:not-allowed}
+.btn-danger{background:#c62828;color:#fff}
+.btn-danger:hover{background:#d32f2f}
+.btn-success{background:#2e7d32;color:#fff}
+.btn-success:hover{background:#388e3c}
+.btn-outline{background:transparent;border:1px solid #1a237e;color:#1a237e}
+.btn-outline:hover{background:#e8eaf6}
+.controls{display:flex;gap:12px;align-items:center;margin-bottom:16px}
+.controls label{font-size:14px;font-weight:500;min-width:60px}
+.controls select,.controls input{padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px}
+.controls select{min-width:140px}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge-ok{background:#e8f5e9;color:#2e7d32}
+.badge-warning{background:#fff3e0;color:#f57f17}
+.badge-critical{background:#ffebee;color:#c62828}
+.badge-paused{background:#e3f2fd;color:#1565c0}
+.hidden{display:none}
+.status-bar{display:flex;align-items:center;gap:8px;padding:8px 0;font-size:14px}
+.status-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+.status-dot.ok{background:#2e7d32}
+.status-dot.warning{background:#f57f17}
+.status-dot.critical{background:#c62828}
+.flex{display:flex;gap:24px;flex-wrap:wrap}
+.flex-1{flex:1;min-width:280px}
+.mt{margin-top:16px}
+.mb{margin-bottom:16px}
+.text-center{text-align:center}
+.empty-state{padding:40px;text-align:center;color:#999;font-size:14px}
+@media(max-width:768px){nav{gap:12px;padding:0 12px}nav a{font-size:12px;padding:18px 6px}.container{padding:12px}}
+</style>
+</head>
+<body>
+<nav>
+  <h1>Pharma Platform</h1>
+  <a onclick="navigate('dashboard')" id="nav-dashboard" class="active">Dashboard</a>
+  <a onclick="navigate('plcs')" id="nav-plcs">PLCs</a>
+  <a onclick="navigate('telemetry')" id="nav-telemetry">Telemetry</a>
+  <a onclick="navigate('alarms')" id="nav-alarms">Alarms</a>
+  <a onclick="navigate('controls')" id="nav-controls">Controls</a>
+</nav>
+<div class="container" id="app"></div>
+
+<script>
+const API = '';
+let state = { page: 'dashboard', plcId: null, data: {} };
+
+async function get(path) {
+  const r = await fetch(API + path);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function post(path) {
+  const r = await fetch(API + path, { method: 'POST' });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function navigate(page, params) {
+  state.page = page;
+  if (params) Object.assign(state, params);
+  document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
+  const el = document.getElementById('nav-' + page);
+  if (el) el.classList.add('active');
+  render();
+}
+
+function $el(tag, attrs, ...children) {
+  const el = document.createElement(tag);
+  if (attrs) for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'className') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k === 'innerHTML') el.innerHTML = v;
+    else el.setAttribute(k, v);
+  }
+  for (const c of children) {
+    if (typeof c === 'string') el.appendChild(document.createTextNode(c));
+    else if (c) el.appendChild(c);
+  }
+  return el;
+}
+
+function table(headers, rows, opts) {
+  const t = $el('table');
+  const thead = $el('tr');
+  headers.forEach(h => thead.appendChild($el('th', {}, h)));
+  t.appendChild($el('thead', {}, thead));
+  const tbody = $el('tbody');
+  if (rows.length === 0) {
+    tbody.appendChild($el('tr', {}, $el('td', {colspan: headers.length, className: 'empty-state'}, 'No data')));
+  } else {
+    rows.forEach((row, i) => {
+      const tr = $el('tr');
+      row.forEach(cell => {
+        if (typeof cell === 'object' && cell !== null && cell.tagName) {
+          tr.appendChild($el('td', {}, cell));
+        } else {
+          tr.appendChild($el('td', {}, String(cell)));
+        }
+      });
+      if (opts?.onClick) tr.addEventListener('click', () => opts.onClick(i));
+      if (opts?.className) tr.className = opts.className;
+      tbody.appendChild(tr);
+    });
+  }
+  t.appendChild(tbody);
+  return t;
+}
+
+async function render() {
+  const app = document.getElementById('app');
+  app.innerHTML = '<div class="text-center" style="padding:40px;color:#999">Loading...</div>';
+
+  try {
+    switch (state.page) {
+      case 'dashboard': app.innerHTML = ''; app.appendChild(await renderDashboard()); break;
+      case 'plcs': app.innerHTML = ''; app.appendChild(await renderPLCs()); break;
+      case 'telemetry': app.innerHTML = ''; app.appendChild(await renderTelemetry()); break;
+      case 'alarms': app.innerHTML = ''; app.appendChild(await renderAlarms()); break;
+      case 'controls': app.innerHTML = ''; app.appendChild(await renderControls()); break;
+      default: navigate('dashboard');
+    }
+  } catch (e) {
+    app.innerHTML = `<div class="card"><h2>Error</h2><p style="color:#c62828">${e.message}</p></div>`;
+  }
+}
+
+async function renderDashboard() {
+  const status = await get('/system/status');
+  const f = document.createDocumentFragment();
+
+  f.appendChild($el('h2', {style: 'margin-bottom:16px'}, 'Dashboard'));
+
+  const statusClass = status.status === 'ok' ? 'ok' : status.status === 'needs_attention' ? 'warning' : 'critical';
+  f.appendChild($el('div', {className: 'stats'},
+    $el('div', {className: 'stat'},
+      $el('div', {className: 'label'}, 'System'),
+      $el('div', {className: `value ${statusClass}`}, status.status.replace('_', ' ').toUpperCase()),
+      $el('span', {className: `badge badge-${statusClass}`}, status.status)
+    ),
+    $el('div', {className: 'stat'},
+      $el('div', {className: 'label'}, 'PLCs'),
+      $el('div', {className: 'value'}, status.plcs.total),
+      $el('div', {}, `${status.plcs.online} online · ${status.plcs.offline} offline`)
+    ),
+    $el('div', {className: 'stat'},
+      $el('div', {className: 'label'}, 'Active Alarms'),
+      $el('div', {className: `value ${status.alarms.active > 0 ? 'critical' : 'ok'}`}, status.alarms.active),
+      $el('div', {}, `${status.alarms.critical} critical`)
+    ),
+    $el('div', {className: 'stat'},
+      $el('div', {className: 'label'}, 'Collector'),
+      $el('div', {className: `value ${status.collector.status === 'paused' ? 'warning' : 'ok'}`}, status.collector.status.toUpperCase()),
+      $el('span', {className: `badge ${status.collector.status === 'paused' ? 'badge-paused' : 'badge-ok'}`}, status.collector.status)
+    )
+  ));
+
+  try {
+    const latest = await get('/telemetry/latest');
+    if (latest.length) {
+      f.appendChild($el('div', {className: 'card'},
+        $el('h2', {}, 'Latest Telemetry'),
+        table(['PLC', 'Tag', 'Value', 'Quality', 'Timestamp'],
+          latest.slice(0, 20).map(s => [
+            s.plcid || s.PLCID,
+            s.tagid || s.TagID,
+            s.value ?? s.Value,
+            s.quality ?? s.Quality,
+            new Date(s.timestamp || s.Timestamp).toLocaleString()
+          ])
+        )
+      ));
+    }
+  } catch(_) {}
+
+  return f;
+}
+
+async function renderPLCs() {
+  const f = document.createDocumentFragment();
+  f.appendChild($el('h2', {style: 'margin-bottom:16px'}, 'Programmable Logic Controllers'));
+
+  const plcs = await get('/plcs');
+
+  f.appendChild($el('div', {className: 'card'},
+    table(['ID', 'Machine Name', 'Driver'],
+      plcs.map(p => [p.id, p.machine_name, p.driver]),
+      {onClick: i => navigate('plcs', {plcId: plcs[i].id})}
+    )
+  ));
+
+  if (state.plcId) {
+    const plc = await get(`/plcs/${state.plcId}`);
+    const tags = await get(`/plcs/${state.plcId}/tags`);
+    let latest = [];
+    try { latest = await get(`/telemetry/latest/${state.plcId}`); } catch(_) {}
+    const status = await get(`/plcs/${state.plcId}/status`);
+
+    f.appendChild($el('div', {className: 'card'},
+      $el('h2', {}, `${plc.machine_name} (${plc.id})`),
+      $el('div', {className: 'flex'},
+        $el('div', {className: 'flex-1'},
+          $el('p', {}, `Driver: ${plc.driver}`),
+          $el('p', {}, `Tags: ${status.tags_count} (${status.tags_active} active)`),
+          $el('p', {}, `Connected: ${status.connected ? 'Yes' : 'No'}`)
+        ),
+        $el('div', {className: 'flex-1'},
+          $el('button', {className: 'btn btn-outline', onclick: () => navigate('plcs', {plcId: null})}, '← Back to PLCs')
+        )
+      )
+    ));
+
+    if (tags.length) {
+      f.appendChild($el('div', {className: 'card'},
+        $el('h2', {}, 'Tags'),
+        table(['ID', 'Name', 'Address', 'Data Type', 'Poll Interval', 'Enabled'],
+          tags.map(t => [t.id, t.name, t.address, t.data_type, t.poll_interval, t.enabled ? 'Yes' : 'No'])
+        )
+      ));
+    }
+
+    if (latest.length) {
+      f.appendChild($el('div', {className: 'card'},
+        $el('h2', {}, 'Latest Values'),
+        table(['Tag', 'Value', 'Quality', 'Timestamp'],
+          latest.map(s => [
+            s.tagid || s.TagID,
+            s.value ?? s.Value,
+            s.quality ?? s.Quality,
+            new Date(s.timestamp || s.Timestamp).toLocaleString()
+          ])
+        )
+      ));
+    }
+  }
+
+  return f;
+}
+
+async function renderTelemetry() {
+  const f = document.createDocumentFragment();
+  f.appendChild($el('h2', {style: 'margin-bottom:16px'}, 'Telemetry'));
+
+  const tabs = $el('div', {className: 'controls'},
+    $el('button', {className: 'btn btn-primary', id: 'tab-latest', onclick: () => showTelemetryTab('latest')}, 'Latest'),
+    $el('button', {className: 'btn btn-outline', id: 'tab-history', onclick: () => showTelemetryTab('history')}, 'History'),
+    $el('button', {className: 'btn btn-outline', id: 'tab-aggregate', onclick: () => showTelemetryTab('aggregate')}, 'Aggregate')
+  );
+  f.appendChild(tabs);
+
+  const content = $el('div', {id: 'telemetry-content'});
+  f.appendChild(content);
+
+  state.telemetryTab = state.telemetryTab || 'latest';
+  await showTelemetryTab(state.telemetryTab, content);
+
+  return f;
+}
+
+async function showTelemetryTab(tab, contentEl) {
+  state.telemetryTab = tab;
+  if (!contentEl) contentEl = document.getElementById('telemetry-content');
+  contentEl.innerHTML = '<div class="text-center" style="padding:20px;color:#999">Loading...</div>';
+
+  document.querySelectorAll('#tab-latest, #tab-history, #tab-aggregate').forEach(b => {
+    b.className = 'btn btn-outline';
+  });
+  const btn = document.getElementById('tab-' + tab);
+  if (btn) btn.className = 'btn btn-primary';
+
+  if (tab === 'latest') {
+    try {
+      const data = await get('/telemetry/latest');
+      contentEl.innerHTML = '';
+      contentEl.appendChild($el('div', {className: 'card'},
+        table(['PLC', 'Tag', 'Value', 'Quality', 'Timestamp'],
+          data.map(s => [
+            s.plcid || s.PLCID,
+            s.tagid || s.TagID,
+            s.value ?? s.Value,
+            s.quality ?? s.Quality,
+            new Date(s.timestamp || s.Timestamp).toLocaleString()
+          ])
+        )
+      ));
+    } catch(e) {
+      contentEl.innerHTML = `<p style="color:#c62828">${e.message}</p>`;
+    }
+  } else if (tab === 'history') {
+    const plcs = await get('/plcs');
+    const plcOptions = plcs.map(p => `<option value="${p.id}">${p.machine_name}</option>`).join('');
+
+    contentEl.innerHTML = `
+      <div class="card">
+        <div class="controls">
+          <label>PLC</label>
+          <select id="hist-plc">${plcOptions}</select>
+          <label>Tag</label>
+          <input type="text" id="hist-tag" placeholder="tag-id" value="${state.histTag || ''}" style="width:120px">
+          <label>From</label>
+          <input type="datetime-local" id="hist-start">
+          <label>To</label>
+          <input type="datetime-local" id="hist-end">
+          <button class="btn btn-primary" onclick="queryHistory()">Query</button>
+        </div>
+        <div id="history-results"></div>
+      </div>`;
+  } else if (tab === 'aggregate') {
+    const plcs = await get('/plcs');
+    const plcOptions = plcs.map(p => `<option value="${p.id}">${p.machine_name}</option>`).join('');
+
+    contentEl.innerHTML = `
+      <div class="card">
+        <div class="controls" style="flex-wrap:wrap">
+          <label>PLC</label>
+          <select id="agg-plc">${plcOptions}</select>
+          <label>Tag</label>
+          <input type="text" id="agg-tag" placeholder="tag-id" style="width:120px">
+          <label>Interval</label>
+          <select id="agg-interval">
+            <option value="1m">1 Minute</option>
+            <option value="1h">1 Hour</option>
+            <option value="1d">1 Day</option>
+            <option value="1w">1 Week</option>
+          </select>
+          <label>From</label>
+          <input type="datetime-local" id="agg-start">
+          <label>To</label>
+          <input type="datetime-local" id="agg-end">
+          <button class="btn btn-primary" onclick="queryAggregate()">Query</button>
+        </div>
+        <div id="aggregate-results"></div>
+      </div>`;
+  }
+}
+
+async function queryHistory() {
+  const plc = document.getElementById('hist-plc').value;
+  const tag = document.getElementById('hist-tag').value;
+  const start = document.getElementById('hist-start').value;
+  const end = document.getElementById('hist-end').value;
+  if (!plc || !tag || !start || !end) return;
+
+  state.histTag = tag;
+  const el = document.getElementById('history-results');
+  el.innerHTML = '<div class="text-center" style="padding:20px;color:#999">Loading...</div>';
+
+  try {
+    const data = await get(`/telemetry/history?plc_id=${plc}&tag_id=${tag}&start=${start}:00Z&end=${end}:00Z`);
+    el.innerHTML = '';
+    el.appendChild(table(['Timestamp', 'PLC', 'Tag', 'Value', 'Quality'],
+      data.map(s => [
+        new Date(s.timestamp || s.Timestamp).toLocaleString(),
+        s.plcid || s.PLCID,
+        s.tagid || s.TagID,
+        s.value ?? s.Value,
+        s.quality ?? s.Quality
+      ])
+    ));
+  } catch(e) {
+    el.innerHTML = `<p style="color:#c62828">${e.message}</p>`;
+  }
+}
+
+async function queryAggregate() {
+  const plc = document.getElementById('agg-plc').value;
+  const tag = document.getElementById('agg-tag').value;
+  const interval = document.getElementById('agg-interval').value;
+  const start = document.getElementById('agg-start').value;
+  const end = document.getElementById('agg-end').value;
+  if (!plc || !tag || !start || !end) return;
+
+  const el = document.getElementById('aggregate-results');
+  el.innerHTML = '<div class="text-center" style="padding:20px;color:#999">Loading...</div>';
+
+  try {
+    const data = await get(`/telemetry/aggregate?plc_id=${plc}&tag_id=${tag}&interval=${interval}&start=${start}:00Z&end=${end}:00Z`);
+    el.innerHTML = '';
+    if (data.length === 0) {
+      el.innerHTML = '<div class="empty-state">No data for this range</div>';
+    } else {
+      el.appendChild(table(['Timestamp', 'Avg', 'Min', 'Max'],
+        data.map(s => [
+          new Date(s.timestamp).toLocaleString(),
+          s.avg.toFixed(2),
+          s.min.toFixed(2),
+          s.max.toFixed(2)
+        ])
+      ));
+    }
+  } catch(e) {
+    el.innerHTML = `<p style="color:#c62828">${e.message}</p>`;
+  }
+}
+
+async function renderAlarms() {
+  const f = document.createDocumentFragment();
+  f.appendChild($el('h2', {style: 'margin-bottom:16px'}, 'Alarms'));
+
+  const tabs = $el('div', {className: 'controls'},
+    $el('button', {className: 'btn btn-primary', id: 'alarm-all', onclick: () => showAlarms('all')}, 'All'),
+    $el('button', {className: 'btn btn-outline', id: 'alarm-active', onclick: () => showAlarms('active')}, 'Active')
+  );
+  f.appendChild(tabs);
+
+  const content = $el('div', {id: 'alarm-content'});
+  f.appendChild(content);
+  state.alarmFilter = 'all';
+  await showAlarms('all', content);
+  return f;
+}
+
+async function showAlarms(filter, contentEl) {
+  state.alarmFilter = filter;
+  if (!contentEl) contentEl = document.getElementById('alarm-content');
+  contentEl.innerHTML = '<div class="text-center" style="padding:20px;color:#999">Loading...</div>';
+
+  document.querySelectorAll('#alarm-all, #alarm-active').forEach(b => {
+    b.className = 'btn btn-outline';
+  });
+  const btn = document.getElementById(filter === 'all' ? 'alarm-all' : 'alarm-active');
+  if (btn) btn.className = 'btn btn-primary';
+
+  try {
+    const path = filter === 'active' ? '/alarms/active' : '/alarms';
+    const data = await get(path);
+    contentEl.innerHTML = '';
+    contentEl.appendChild($el('div', {className: 'card'},
+      table(['ID', 'PLC', 'Message', 'Severity', 'Active', 'Created'],
+        data.map(a => [
+          a.id,
+          a.plc_id,
+          a.message,
+          $el('span', {className: `badge badge-${a.severity === 'critical' ? 'critical' : a.severity === 'warning' ? 'warning' : 'ok'}`}, a.severity),
+          a.active ? 'Yes' : 'No',
+          new Date(a.created_at).toLocaleString()
+        ])
+      )
+    ));
+  } catch(e) {
+    contentEl.innerHTML = `<p style="color:#c62828">${e.message}</p>`;
+  }
+}
+
+async function renderControls() {
+  const f = document.createDocumentFragment();
+  f.appendChild($el('h2', {style: 'margin-bottom:16px'}, 'Collector Controls'));
+
+  const status = await get('/collector/status');
+  const isPaused = status.paused;
+
+  const statusCard = $el('div', {className: 'card'},
+    $el('h2', {}, 'Current Status'),
+    $el('div', {className: 'status-bar'},
+      $el('span', {className: `status-dot ${isPaused ? 'warning' : 'ok'}`}),
+      $el('span', {style: 'font-weight:600'}, isPaused ? 'PAUSED' : 'RUNNING')
+    ),
+    $el('p', {style: 'margin-top:8px;color:#666;font-size:13px'},
+      `Ticks: ${status.tick_count} · Dispatches: ${status.dispatch_sum}`
+    )
+  );
+  f.appendChild(statusCard);
+
+  const controlCard = $el('div', {className: 'card'},
+    $el('h2', {}, 'Controls'),
+    $el('p', {style: 'margin-bottom:16px;color:#666;font-size:14px'},
+      isPaused
+        ? 'Collector is paused. Click Resume to restart data collection.'
+        : 'Collector is running. Click Pause to stop data collection.'
+    ),
+    $el('div', {className: 'controls'},
+      $el('button', {
+        className: 'btn btn-success',
+        disabled: !isPaused,
+        id: 'resume-btn',
+        onclick: async () => {
+          document.getElementById('resume-btn').disabled = true;
+          document.getElementById('pause-btn').disabled = true;
+          await post('/collector/resume');
+          renderControls();
+        }
+      }, '▶ Resume'),
+      $el('button', {
+        className: 'btn btn-danger',
+        disabled: isPaused,
+        id: 'pause-btn',
+        onclick: async () => {
+          document.getElementById('resume-btn').disabled = true;
+          document.getElementById('pause-btn').disabled = true;
+          await post('/collector/pause');
+          renderControls();
+        }
+      }, '⏸ Pause')
+    )
+  );
+  f.appendChild(controlCard);
+
+  return f;
+}
+
+navigate('dashboard');
+</script>
+</body>
+</html>

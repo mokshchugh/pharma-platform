@@ -19,6 +19,10 @@ func (c *Collector) runScheduler(ctx context.Context) {
 			return
 
 		case now := <-ticker.C:
+			if c.paused.Load() {
+				continue
+			}
+
 			for _, tag := range c.tags {
 				if !tag.Enabled {
 					continue
