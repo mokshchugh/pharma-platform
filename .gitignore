@@ -1,11 +1,13 @@
 # Environment
 .env
 
-# Storage
-storage/
+# Persistent storage (bind-mounted docker volumes)
+persistent/
+persistent/postgres/
+persistent/questdb/
 
 # Logs
-logs/
+runtime/logs/
 
 # Go
 *.exe

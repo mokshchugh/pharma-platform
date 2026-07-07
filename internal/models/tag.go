@@ -9,6 +9,8 @@ type Tag struct {
 	Name         string        `yaml:"name"`
 	Address      string        `yaml:"address"`
 	DataType     DataType      `yaml:"data_type"`
+	Unit         string        `yaml:"unit"`
+	ScaleFactor  float64       `yaml:"scale_factor"`
 	PollInterval time.Duration `yaml:"poll_interval"`
 	Enabled      bool          `yaml:"enabled"`
 }

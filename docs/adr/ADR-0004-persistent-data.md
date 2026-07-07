@@ -1,6 +1,6 @@
 # ADR-0004: Persistent Data Storage Strategy
 
-**Status:** Accepted
+**Status:** Accepted (Updated 2026-07-07)
 
 **Date:** 2026-06-28
 
@@ -16,108 +16,62 @@ These datasets are operationally critical and must survive:
 * Host system reboots
 * Application redeployments
 
-The storage strategy must also simplify backup, inspection, migration, and disaster recovery.
-
 ## Decision
 
-Persistent application data will be stored outside the project repository using host bind mounts.
+Persistent application data will be stored using host bind mounts in a `persistent/` directory at the project root.
 
-Application source code and operational data will remain physically separated.
-
-Project layout:
+The `persistent/` directory is gitignored and contains subdirectories for each database service:
 
 ```text
-Projects/
-
 pharma-platform/
     Source Code
     Documentation
     Configuration
     Deployment
 
-pharma-platform-data/
-    PostgreSQL/
-    QuestDB/
-    Grafana/
-    Logs/
-    Backups/
+pharma-platform/persistent/
+    postgres/       → PostgreSQL PGDATA
+    questdb/        → QuestDB data files
 ```
 
-Each service is assigned its own dedicated storage directory.
+The `persistent/` directory lives inside the project root but is excluded from version control. This keeps the setup self-contained while ensuring data survives container rebuilds.
 
-Example:
+### Docker Compose Integration
 
 ```yaml
-volumes:
-  - ${DATA_ROOT}/postgres:/var/lib/postgresql
+services:
+  postgres:
+    volumes:
+      - ../persistent/postgres:/var/lib/postgresql/data
 
-volumes:
-  - ${DATA_ROOT}/questdb:/var/lib/questdb
+  questdb:
+    volumes:
+      - ../persistent/questdb:/var/lib/questdb
 ```
 
 ## Alternatives Considered
 
-### Container Writable Layer
+### External Data Directory
 
-Pros
+Previously the design specified a separate `pharma-platform-data/` directory outside the project root. This was changed to `persistent/` inside the project root to:
 
-* No additional configuration
-
-Cons
-
-* Data lost when containers are removed
-* Unsuitable for databases
-* Difficult backup process
-
----
+- Simplify setup (single clone + `docker compose up`)
+- Keep related data co-located with the project
+- Reduce configuration surface area
 
 ### Docker Named Volumes
 
-Pros
+Pros: Docker-managed, easy to create, portable across Compose deployments.
 
-* Docker-managed
-* Easy to create
-* Portable across Compose deployments
-
-Cons
-
-* Data location abstracted by Docker
-* Less transparent to administrators
-* More difficult to inspect manually
-* Backup and migration require Docker tooling
-
----
+Cons: Data location abstracted by Docker, less transparent, backup requires Docker tooling.
 
 ### Host Bind Mounts (Selected)
 
-Pros
-
-* Data location fully controlled by administrators
-* Easy inspection using standard operating system tools
-* Straightforward backup and restore procedures
-* Data survives container recreation
-* Independent of Docker's internal storage implementation
-* Clear separation between application code and operational data
-
-Cons
-
-* Host directory structure must be managed
-* Requires correct filesystem permissions
-* Slightly less portable between hosts without adjusting paths
+Pros: Data location fully controlled, easy inspection, straightforward backup, survives container recreation, clear separation between code and data.
 
 ## Rationale
 
-The platform is intended for long-running industrial deployments where operational reliability and data integrity take precedence over deployment convenience.
-
-Separating application code from operational data allows:
-
-* Independent application upgrades
-* Simple disaster recovery
-* Transparent filesystem organization
-* Easier system administration
-* Predictable backup procedures
-
-The chosen strategy aligns with the principle that application code is replaceable, while production data is not.
+Binding data directories inside the project root as gitignored directories provides the best balance of simplicity and data integrity. The entire platform can be deployed with a single `docker compose up` without pre-creating external directories.
 
 ## Consequences
 
@@ -125,25 +79,10 @@ The chosen strategy aligns with the principle that application code is replaceab
 
 * Persistent storage across redeployments
 * Simple backup and restore operations
-* Improved operational transparency
-* Easier migration to new hardware
-* Reduced risk of accidental data loss
-* Independent lifecycle for code and data
+* Self-contained project setup
+* No external directory management
 
 ### Negative
 
-* Additional host directory management
-* Storage paths become deployment-specific
-* Backup responsibility remains with system administrators
-
-## Future Considerations
-
-As the platform evolves, additional persistent directories may be introduced for:
-
-* Centralized logs
-* Grafana dashboards
-* Configuration snapshots
-* Historical backups
-* Machine learning datasets
-
-The separation between application code and operational data should be maintained regardless of the deployment platform, including future migration to Kubernetes or cloud infrastructure.
+* `persistent/` must be gitignored
+* Large data directories could slow git status operations

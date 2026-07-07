@@ -24,6 +24,7 @@ type TagResponse struct {
 	Name         string `json:"name"`
 	Address      string `json:"address"`
 	DataType     string `json:"data_type"`
+	Unit         string `json:"unit"`
 	PollInterval string `json:"poll_interval"`
 	Enabled      bool   `json:"enabled"`
 }
@@ -39,6 +40,7 @@ func tagToResponse(t models.Tag) TagResponse {
 		Name:         t.Name,
 		Address:      t.Address,
 		DataType:     t.DataType.String(),
+		Unit:         t.Unit,
 		PollInterval: t.PollInterval.String(),
 		Enabled:      t.Enabled,
 	}

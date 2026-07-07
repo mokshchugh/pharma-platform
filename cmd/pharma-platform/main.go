@@ -7,20 +7,19 @@ import (
 	"os/signal"
 	"syscall"
 
-	"pharma-platform/internal/aggregator"
-	"pharma-platform/internal/collector"
+	"pharma-platform/internal/api"
+	"pharma-platform/internal/api/handlers"
 	"pharma-platform/internal/config"
-	"pharma-platform/internal/models"
-	"pharma-platform/internal/plc/drivers/opcua"
 	"pharma-platform/internal/postgres"
 	"pharma-platform/internal/questdb"
+	"pharma-platform/internal/store"
 )
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cfg, err := config.Load("config")
+	cfg, err := config.Load("config/bootstrap.yaml")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -29,87 +28,75 @@ func main() {
 		log.Fatal(err)
 	}
 
-	samples := make(chan models.Sample, 100000)
-
-	driver := opcua.New(opcua.NewConfig(cfg.PLCs[0]))
-
-	collectorService := collector.New(
-		driver,
-		cfg.Collector,
-		cfg.Tags,
-		samples,
-	)
-
-	questClient := questdb.New(
-		questdb.Config{
-			Host:          "localhost",
-			Port:          9009,
-			BatchSize:     1000,
-			FlushInterval: cfg.Aggregator.Interval,
-		},
-	)
-
-	if err := questClient.Connect(ctx); err != nil {
-		log.Fatal(err)
-	}
-
-	writer := questdb.NewWriter(
-		questClient,
-		"plc_samples",
-		samples,
-	)
-
-	postgresClient := postgres.New(
-		postgres.Config{
-			Host:         "localhost",
-			Port:         5432,
-			Database:     "pharma",
-			User:         "postgres",
-			Password:     "postgres",
-			MaxOpenConns: 20,
-			MaxIdleConns: 10,
-		},
-	)
-
+	postgresClient := postgres.New(cfg.Postgres)
 	if err := postgresClient.Connect(ctx); err != nil {
 		log.Fatal(err)
 	}
 	defer postgresClient.Close()
 
-	aggregatorService := aggregator.New(
-		questClient,
-		postgres.NewWriter(postgresClient),
-		aggregator.Config{
-			Interval: cfg.Aggregator.Interval,
-		},
-	)
-
-	if err := collectorService.Start(ctx); err != nil {
+	if err := store.MigratePostgres(ctx, postgresClient,
+		"deploy/postgres/init",
+		"deploy/postgres/init",
+		false,
+	); err != nil {
 		log.Fatal(err)
 	}
 
+	questClient := questdb.New(cfg.QuestDB)
+	if err := questClient.Connect(ctx); err != nil {
+		log.Fatal(err)
+	}
+	defer questClient.Close()
+
+	if err := store.MigrateQuestDB(ctx, questClient, "deploy/questdb/init"); err != nil {
+		log.Fatal(err)
+	}
+
+	machineStore := store.NewMachineStore(postgresClient)
+	tagStore := store.NewTagStore(postgresClient)
+	reader := questdb.NewReader(questClient)
+	alarmStore := handlers.NewAlarmStore()
+	dummyCollector := &dummyCollector{}
+
+	telemetryHandler := handlers.NewTelemetryHandler(reader)
+	plcHandler := handlers.NewPLCHandler(machineStore)
+	tagHandler := handlers.NewTagHandler(tagStore)
+	collectorHandler := handlers.NewCollectorHandler(dummyCollector)
+	alarmHandler := handlers.NewAlarmHandler(alarmStore)
+	systemHandler := handlers.NewSystemHandler(machineStore, alarmStore, dummyCollector)
+
+	server := api.NewFull(cfg.API, &api.Handlers{
+		Telemetry: telemetryHandler,
+		PLC:       plcHandler,
+		Tag:       tagHandler,
+		Collector: collectorHandler,
+		Alarms:    alarmHandler,
+		System:    systemHandler,
+	})
+
 	go func() {
-		if err := writer.Start(ctx); err != nil {
+		log.Printf("Pharma Platform listening on %s:%d", cfg.API.Host, cfg.API.Port)
+		if err := server.Start(); err != nil {
 			log.Fatal(err)
 		}
 	}()
 
-	if err := aggregatorService.Start(ctx); err != nil {
-		log.Fatal(err)
-	}
-
-	log.Println("Pharma Platform started.")
+	log.Println("Pharma Platform started (production mode)")
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 
 	<-sig
-
 	log.Println("Shutting down...")
 
+	_ = server.Stop(ctx)
 	cancel()
-
-	collectorService.Stop()
-	writer.Stop()
-	aggregatorService.Stop()
 }
+
+type dummyCollector struct{}
+
+func (d *dummyCollector) IsPaused() bool    { return false }
+func (d *dummyCollector) Pause()             {}
+func (d *dummyCollector) Resume()            {}
+func (d *dummyCollector) TickCount() int64   { return 0 }
+func (d *dummyCollector) DispatchSum() int64 { return 0 }

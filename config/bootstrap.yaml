@@ -1,0 +1,30 @@
+postgres:
+  host: localhost
+  port: 5432
+  database: pharma
+  user: postgres
+  password: postgres
+  max_open_conns: 20
+  max_idle_conns: 10
+
+questdb:
+  host: localhost
+  port: 9009
+  batch_size: 1000
+  flush_interval: 1s
+
+api:
+  host: 0.0.0.0
+  port: 8081
+
+collector:
+  workers: 16
+  queue_size: 10000
+
+aggregator:
+  interval: 1m
+
+plant:
+  name: Pharma Platform
+  location: Manufacturing Facility
+  timezone: Asia/Kolkata

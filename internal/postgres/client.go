@@ -59,6 +59,10 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 }
 
+func (c *Client) DB() *sql.DB {
+	return c.db
+}
+
 func (c *Client) Close() error {
 	if c.db == nil {
 		return nil

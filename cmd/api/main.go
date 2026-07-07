@@ -2,70 +2,70 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"pharma-platform/internal/api"
 	"pharma-platform/internal/api/handlers"
 	"pharma-platform/internal/config"
-	"pharma-platform/internal/models"
+	"pharma-platform/internal/postgres"
 	"pharma-platform/internal/questdb"
+	"pharma-platform/internal/store"
 )
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var apiCfg config.APIConfig
-	apiCfg.Host = "0.0.0.0"
-	apiCfg.Port = 8081
-
-	plcs := []models.PLC{
-		{ID: "plc-1", Name: "Fluid Bed Dryer", Driver: "opcua", IPAddress: "localhost", Port: 4840, Enabled: true},
-		{ID: "plc-2", Name: "Tablet Press", Driver: "opcua", IPAddress: "localhost", Port: 4841, Enabled: true},
-		{ID: "plc-3", Name: "HVAC System", Driver: "opcua", IPAddress: "localhost", Port: 4842, Enabled: true},
+	cfg, err := config.Load("config/bootstrap.yaml")
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	tags := make([]models.Tag, 0, 75)
-	for _, p := range plcs {
-		for i := range 25 {
-			tags = append(tags, models.Tag{
-				ID:           fmt.Sprintf("%s-tag-%02d", p.ID, i),
-				PLCID:        p.ID,
-				Name:         fmt.Sprintf("%s Tag %d", p.Name, i),
-				Address:      fmt.Sprintf("ns=2;s=%s-tag-%02d", p.ID, i),
-				DataType:     models.DataTypeFloat64,
-				PollInterval: 100 * time.Millisecond,
-				Enabled:      true,
-			})
-		}
+	if err := config.Validate(cfg); err != nil {
+		log.Fatal(err)
 	}
 
-	client := questdb.New(questdb.Config{
-		Host:          "localhost",
-		Port:          9009,
-		BatchSize:     1000,
-		FlushInterval: 0,
-	})
+	postgresClient := postgres.New(cfg.Postgres)
+	if err := postgresClient.Connect(ctx); err != nil {
+		log.Fatal(err)
+	}
+	defer postgresClient.Close()
 
-	reader := questdb.NewReader(client)
-	plcStore := handlers.NewPLCConfigStore(plcs, tags)
+	if err := store.MigratePostgres(ctx, postgresClient,
+		"deploy/postgres/init",
+		"deploy/postgres/init",
+		true,
+	); err != nil {
+		log.Fatal(err)
+	}
+
+	questClient := questdb.New(cfg.QuestDB)
+	if err := questClient.Connect(ctx); err != nil {
+		log.Fatal(err)
+	}
+	defer questClient.Close()
+
+	if err := store.MigrateQuestDB(ctx, questClient, "deploy/questdb/init"); err != nil {
+		log.Fatal(err)
+	}
+
+	reader := questdb.NewReader(questClient)
+	machineStore := store.NewMachineStore(postgresClient)
+	tagStore := store.NewTagStore(postgresClient)
 	alarmStore := handlers.NewAlarmStore()
+	dummyCollector := &dummyCollector{}
 
 	telemetryHandler := handlers.NewTelemetryHandler(reader)
-	plcHandler := handlers.NewPLCHandler(plcStore)
-	tagHandler := handlers.NewTagHandler(plcStore)
-
-	dummyCollector := &dummyCollector{}
+	plcHandler := handlers.NewPLCHandler(machineStore)
+	tagHandler := handlers.NewTagHandler(tagStore)
 	collectorHandler := handlers.NewCollectorHandler(dummyCollector)
 	alarmHandler := handlers.NewAlarmHandler(alarmStore)
-	systemHandler := handlers.NewSystemHandler(plcStore, alarmStore, dummyCollector)
+	systemHandler := handlers.NewSystemHandler(machineStore, alarmStore, dummyCollector)
 
-	server := api.NewFull(apiCfg, &api.Handlers{
+	server := api.NewFull(cfg.API, &api.Handlers{
 		Telemetry: telemetryHandler,
 		PLC:       plcHandler,
 		Tag:       tagHandler,
@@ -75,13 +75,14 @@ func main() {
 	})
 
 	go func() {
-		log.Printf("API listening on %s:%d", apiCfg.Host, apiCfg.Port)
+		log.Printf("API listening on %s:%d", cfg.API.Host, cfg.API.Port)
 		if err := server.Start(); err != nil {
 			log.Fatal(err)
 		}
 	}()
 
-	log.Println("standalone API started · http://localhost:8081/")
+	addr := "http://localhost:8081/"
+	log.Printf("standalone API started · %s", addr)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)

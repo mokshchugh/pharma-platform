@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: pharma-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pharma
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      TZ: Asia/Kolkata
+    ports:
+      - "5432:5432"
+    volumes:
+      - ../persistent/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  questdb:
+    image: questdb/questdb:9.1.0
+    container_name: pharma-questdb
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "8812:8812"
+      - "9009:9009"
+    volumes:
+      - ../persistent/questdb:/var/lib/questdb
+
+  app:
+    build:
+      context: ..
+      dockerfile: runtime/docker/Dockerfile
+    container_name: pharma-app
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      questdb:
+        condition: service_started
