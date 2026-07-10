@@ -31,12 +31,12 @@ Two query methods are provided:
 
 ### Latest
 
-Executes QuestDB's `LATEST ON` SQL extension to retrieve the most recent sample per PLC/tag partition:
+Executes QuestDB's `LATEST ON` SQL extension to retrieve the most recent sample per machine/tag partition:
 
 ```sql
 SELECT *
 FROM plc_samples
-LATEST ON timestamp PARTITION BY plc_id, tag_id
+LATEST ON timestamp PARTITION BY machine_id, tag_name
 ```
 
 ### History
@@ -46,8 +46,8 @@ Executes a filtered range query with RFC 3339 timestamps:
 ```sql
 SELECT *
 FROM plc_samples
-WHERE plc_id = '<id>'
-  AND tag_id = '<id>'
+WHERE machine_id = '<id>'
+  AND tag_name = '<name>'
   AND timestamp BETWEEN '<start>' AND '<end>'
 ORDER BY timestamp
 ```

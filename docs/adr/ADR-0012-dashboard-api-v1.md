@@ -18,8 +18,8 @@ Define an 18-endpoint REST API contract covering all dashboard read operations p
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| `GET` | `/telemetry/latest` | Latest sample per PLC/tag pair |
-| `GET` | `/telemetry/latest/{plc_id}` | Latest per tag scoped to a PLC |
+| `GET` | `/telemetry/latest` | Latest sample per machine/tag pair |
+| `GET` | `/telemetry/latest/{plc_id}` | Latest per tag scoped to a machine |
 | `GET` | `/telemetry/latest/{plc_id}/{tag_id}` | Single latest sample |
 | `GET` | `/telemetry/history` | Raw samples within a time window |
 | `GET` | `/telemetry/aggregate` | Time-bucketed min/max/avg |
@@ -30,8 +30,8 @@ Define an 18-endpoint REST API contract covering all dashboard read operations p
 |--------|----------|---------|
 | `GET` | `/plcs` | All configured PLCs |
 | `GET` | `/plcs/{plc_id}` | Single PLC |
-| `GET` | `/plcs/{plc_id}/status` | PLC connectivity and tag stats |
-| `GET` | `/plcs/{plc_id}/tags` | Tags belonging to a PLC |
+| `GET` | `/plcs/{plc_id}/status` | Machine connectivity and tag stats |
+| `GET` | `/plcs/{plc_id}/tags` | Tags belonging to a machine |
 
 ### Tags
 

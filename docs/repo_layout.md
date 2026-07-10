@@ -7,14 +7,15 @@ pharma-platform/
 │   │   ├── pharma-platform/main.go       # Production binary
 │   │   ├── dev-mode/main.go              # Development all-in-one
 │   │   ├── api/main.go                   # Standalone API server
-│   │   ├── collector-sim/collector-sim.go # Standalone simulator
-│   │   └── seed/main.go                  # Standalone DB seeder
+│   │   ├── collector-sim/main.go         # Standalone simulator
+│   │   ├── seed/main.go                  # Standalone DB seeder
+│   │   └── migrate/main.go              # Standalone migration runner
 │   │
 │   ├── internal/
 │   │   ├── store/                        # PostgreSQL-backed stores
 │   │   ├── collector/                    # Telemetry collector
 │   │   ├── plc/                          # PLC driver interface + drivers
-│   │   ├── questdb/                      # QuestDB client
+│   │   ├── questdb/                      # QuestDB client + ILP writer
 │   │   ├── postgres/                     # PostgreSQL client
 │   │   ├── config/                       # Bootstrap config loader
 │   │   ├── api/                          # REST API handlers + server
@@ -25,8 +26,10 @@ pharma-platform/
 │   │   └── bootstrap.yaml                # Single config file
 │   │
 │   ├── deploy/
-│   │   ├── postgres/init/                # PostgreSQL schema + seed SQL
-│   │   └── questdb/init/                 # QuestDB table DDL
+│   │   ├── postgres/
+│   │   │   ├── init/                     # PostgreSQL schema DDL
+│   │   │   └── seed/                     # Seed data SQL
+│   │   └── questdb/init/                 # QuestDB table DDL + views
 │   │
 │   ├── runtime/
 │   │   ├── docker/
@@ -36,6 +39,8 @@ pharma-platform/
 │   │
 │   ├── go.mod
 │   └── go.sum
+│
+├── web/                                  # React SPA frontend
 │
 ├── persistent/                           # (git-tracked skeleton) Docker bind mounts
 │   ├── postgres/

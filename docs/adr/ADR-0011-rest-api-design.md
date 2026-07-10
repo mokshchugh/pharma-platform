@@ -12,7 +12,7 @@ At the time of design, the only data store is QuestDB. PostgreSQL is reserved fo
 
 Key requirements:
 
-* Return the latest value for every PLC tag.
+* Return the latest value for every machine tag.
 * Return historical values for a specific tag over a time range.
 * Simple enough to be consumed without a client library.
 * Built with minimal dependencies.
@@ -24,7 +24,7 @@ Implement a REST API using the **go-chi/chi** router with three endpoints:
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Liveness check |
-| `GET` | `/telemetry/latest` | Latest sample per PLC/tag |
+| `GET` | `/telemetry/latest` | Latest sample per machine/tag |
 | `GET` | `/telemetry/history` | Historical samples for a specific tag |
 
 ### Query Parameters (`/telemetry/history`)

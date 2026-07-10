@@ -26,7 +26,7 @@ Write samples to QuestDB using the **InfluxDB Line Protocol over TCP** on port 9
 ILP is QuestDB's recommended path for high-throughput ingestion. Each sample is serialized as a single line:
 
 ```
-plc_samples,plc_id=<escaped>,tag_id=<escaped> value=<encoded>,quality=<int>i <nanoseconds>
+plc_samples,machine_id=<escaped>,machine_name=<escaped>,tag_name=<escaped> value=<encoded>,quality=<int>i <nanoseconds>
 ```
 
 The encoder handles symbol escaping (spaces, commas, equals signs) and value encoding across all supported data types (bool, int variants, float variants, string).
