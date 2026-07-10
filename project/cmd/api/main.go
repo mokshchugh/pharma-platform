@@ -36,7 +36,7 @@ func main() {
 
 	if err := store.MigratePostgres(ctx, postgresClient,
 		"deploy/postgres/init",
-		"deploy/postgres/init",
+		"deploy/postgres/seed",
 		true,
 	); err != nil {
 		log.Fatal(err)

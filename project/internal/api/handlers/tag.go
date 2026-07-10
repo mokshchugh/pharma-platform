@@ -22,6 +22,8 @@ type TagResponse struct {
 	ID           string `json:"id"`
 	PLCID        string `json:"plc_id"`
 	Name         string `json:"name"`
+	MachineID    int    `json:"machine_id"`
+	MachineName  string `json:"machine_name"`
 	Address      string `json:"address"`
 	DataType     string `json:"data_type"`
 	Unit         string `json:"unit"`
@@ -38,6 +40,8 @@ func tagToResponse(t models.Tag) TagResponse {
 		ID:           t.ID,
 		PLCID:        t.PLCID,
 		Name:         t.Name,
+		MachineID:    t.MachineID,
+		MachineName:  t.MachineName,
 		Address:      t.Address,
 		DataType:     t.DataType.String(),
 		Unit:         t.Unit,

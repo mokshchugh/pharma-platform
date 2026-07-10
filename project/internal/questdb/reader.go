@@ -72,7 +72,7 @@ func (r *Reader) Latest(
 ) ([]models.Sample, error) {
 	result, err := r.Query(
 		ctx,
-		`SELECT * FROM plc_samples LATEST ON timestamp PARTITION BY plc_id, tag_id`,
+		`SELECT * FROM plc_samples LATEST ON timestamp PARTITION BY machine_id, tag_name`,
 	)
 	if err != nil {
 		return nil, err
@@ -83,11 +83,11 @@ func (r *Reader) Latest(
 
 func (r *Reader) LatestByPLC(
 	ctx context.Context,
-	plcID string,
+	machineID string,
 ) ([]models.Sample, error) {
 	query := fmt.Sprintf(
-		`SELECT * FROM plc_samples WHERE plc_id = '%s' LATEST ON timestamp PARTITION BY tag_id`,
-		plcID,
+		`SELECT * FROM plc_samples WHERE machine_id = '%s' LATEST ON timestamp PARTITION BY tag_name`,
+		machineID,
 	)
 
 	result, err := r.Query(ctx, query)
@@ -100,17 +100,17 @@ func (r *Reader) LatestByPLC(
 
 func (r *Reader) LatestByPLCAndTag(
 	ctx context.Context,
-	plcID string,
-	tagID string,
+	machineID string,
+	tagName string,
 ) (*models.Sample, error) {
 	query := fmt.Sprintf(`
-SELECT timestamp, plc_id, tag_id, value, quality
+SELECT timestamp, machine_id, machine_name, tag_name, value, quality
 FROM plc_samples
-WHERE plc_id = '%s' AND tag_id = '%s'
+WHERE machine_id = '%s' AND tag_name = '%s'
 ORDER BY timestamp DESC
 LIMIT 1`,
-		plcID,
-		tagID,
+		machineID,
+		tagName,
 	)
 
 	result, err := r.Query(ctx, query)
@@ -132,21 +132,21 @@ LIMIT 1`,
 
 func (r *Reader) History(
 	ctx context.Context,
-	plcID string,
-	tagID string,
+	machineID string,
+	tagName string,
 	start time.Time,
 	end time.Time,
 ) ([]models.Sample, error) {
 	query := fmt.Sprintf(`
 SELECT *
 FROM plc_samples
-WHERE plc_id = '%s'
-  AND tag_id = '%s'
+WHERE machine_id = '%s'
+  AND tag_name = '%s'
   AND timestamp BETWEEN '%s' AND '%s'
 ORDER BY timestamp;
 `,
-		plcID,
-		tagID,
+		machineID,
+		tagName,
 		start.UTC().Format(time.RFC3339Nano),
 		end.UTC().Format(time.RFC3339Nano),
 	)
@@ -166,26 +166,220 @@ type AggregateSample struct {
 	Max       float64   `json:"max"`
 }
 
+// Stream types for the data-stream page
+
+type RawRow struct {
+	Timestamp   string  `json:"timestamp"`
+	MachineID   string  `json:"machine_id"`
+	MachineName string  `json:"machine_name"`
+	TagName     string  `json:"tag_name"`
+	Value       float64 `json:"value"`
+	Quality     int     `json:"quality"`
+}
+
+type AggregateRow struct {
+	Timestamp   string  `json:"timestamp"`
+	MachineID   string  `json:"machine_id"`
+	MachineName string  `json:"machine_name"`
+	TagName     string  `json:"tag_name"`
+	MinValue    float64 `json:"min_value"`
+	MaxValue    float64 `json:"max_value"`
+	AvgValue    float64 `json:"avg_value"`
+	SampleCount int64   `json:"sample_count"`
+}
+
+type StreamResponse struct {
+	Data       any    `json:"data"`
+	Total      int64  `json:"total"`
+	Page       int    `json:"page"`
+	PageSize   int    `json:"page_size"`
+	Resolution string `json:"resolution"`
+}
+
+func (r *Reader) StreamRaw(
+	ctx context.Context,
+	table string,
+	machineID string,
+	tagName string,
+	start time.Time,
+	end time.Time,
+	page int,
+	pageSize int,
+) (*StreamResponse, error) {
+	offset := (page - 1) * pageSize
+
+	query := fmt.Sprintf(`
+SELECT timestamp, machine_id, machine_name, tag_name, value, quality
+FROM %s
+WHERE 1=1`, table)
+
+	if machineID != "" {
+		query += fmt.Sprintf(" AND machine_id = '%s'", machineID)
+	}
+	if tagName != "" {
+		query += fmt.Sprintf(" AND tag_name = '%s'", tagName)
+	}
+	query += fmt.Sprintf(" AND timestamp BETWEEN '%s' AND '%s'",
+		start.UTC().Format(time.RFC3339Nano),
+		end.UTC().Format(time.RFC3339Nano),
+	)
+	query += " ORDER BY timestamp, machine_id, tag_name"
+	query += fmt.Sprintf(" LIMIT %d, %d", offset, pageSize)
+
+	result, err := r.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([]RawRow, 0, len(result.Dataset))
+	for _, row := range result.Dataset {
+		if len(row) != 6 {
+			continue
+		}
+		rows = append(rows, RawRow{
+			Timestamp:   row[0].(string),
+			MachineID:   row[1].(string),
+			MachineName: row[2].(string),
+			TagName:     row[3].(string),
+			Value:       row[4].(float64),
+			Quality:     int(row[5].(float64)),
+		})
+	}
+
+	total, err := r.countStream(ctx, table, machineID, tagName, start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	return &StreamResponse{
+		Data:       rows,
+		Total:      total,
+		Page:       page,
+		PageSize:   pageSize,
+		Resolution: "raw",
+	}, nil
+}
+
+func (r *Reader) StreamAggregate(
+	ctx context.Context,
+	table string,
+	machineID string,
+	tagName string,
+	start time.Time,
+	end time.Time,
+	page int,
+	pageSize int,
+	resolution string,
+) (*StreamResponse, error) {
+	offset := (page - 1) * pageSize
+
+	query := fmt.Sprintf(`
+SELECT timestamp, machine_id, machine_name, tag_name, min_value, max_value, avg_value, sample_count
+FROM %s
+WHERE 1=1`, table)
+
+	if machineID != "" {
+		query += fmt.Sprintf(" AND machine_id = '%s'", machineID)
+	}
+	if tagName != "" {
+		query += fmt.Sprintf(" AND tag_name = '%s'", tagName)
+	}
+	query += fmt.Sprintf(" AND timestamp BETWEEN '%s' AND '%s'",
+		start.UTC().Format(time.RFC3339Nano),
+		end.UTC().Format(time.RFC3339Nano),
+	)
+	query += " ORDER BY timestamp, machine_id, tag_name"
+	query += fmt.Sprintf(" LIMIT %d, %d", offset, pageSize)
+
+	result, err := r.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([]AggregateRow, 0, len(result.Dataset))
+	for _, row := range result.Dataset {
+		if len(row) != 8 {
+			continue
+		}
+		rows = append(rows, AggregateRow{
+			Timestamp:   row[0].(string),
+			MachineID:   row[1].(string),
+			MachineName: row[2].(string),
+			TagName:     row[3].(string),
+			MinValue:    row[4].(float64),
+			MaxValue:    row[5].(float64),
+			AvgValue:    row[6].(float64),
+			SampleCount: int64(row[7].(float64)),
+		})
+	}
+
+	total, err := r.countStream(ctx, table, machineID, tagName, start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	return &StreamResponse{
+		Data:       rows,
+		Total:      total,
+		Page:       page,
+		PageSize:   pageSize,
+		Resolution: resolution,
+	}, nil
+}
+
+func (r *Reader) countStream(
+	ctx context.Context,
+	table string,
+	machineID string,
+	tagName string,
+	start time.Time,
+	end time.Time,
+) (int64, error) {
+	query := fmt.Sprintf("SELECT count() FROM %s WHERE 1=1", table)
+
+	if machineID != "" {
+		query += fmt.Sprintf(" AND machine_id = '%s'", machineID)
+	}
+	if tagName != "" {
+		query += fmt.Sprintf(" AND tag_name = '%s'", tagName)
+	}
+	query += fmt.Sprintf(" AND timestamp BETWEEN '%s' AND '%s'",
+		start.UTC().Format(time.RFC3339Nano),
+		end.UTC().Format(time.RFC3339Nano),
+	)
+
+	result, err := r.Query(ctx, query)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(result.Dataset) == 0 || len(result.Dataset[0]) == 0 {
+		return 0, nil
+	}
+
+	return int64(result.Dataset[0][0].(float64)), nil
+}
+
 func (r *Reader) Aggregate(
 	ctx context.Context,
-	plcID string,
-	tagID string,
+	machineID string,
+	tagName string,
 	interval string,
 	start time.Time,
 	end time.Time,
 ) ([]AggregateSample, error) {
+	table := "plc_samples_" + interval
 	query := fmt.Sprintf(`
-SELECT timestamp, avg(value), min(value), max(value)
-FROM plc_samples
-WHERE plc_id = '%s'
-  AND tag_id = '%s'
-  AND timestamp BETWEEN '%s' AND '%s'
-SAMPLE BY %s`,
-		plcID,
-		tagID,
+SELECT timestamp, avg_value, min_value, max_value
+FROM %s
+WHERE machine_id = '%s'
+  AND tag_name = '%s'
+  AND timestamp BETWEEN '%s' AND '%s'`,
+		table,
+		machineID,
+		tagName,
 		start.UTC().Format(time.RFC3339Nano),
 		end.UTC().Format(time.RFC3339Nano),
-		interval,
 	)
 
 	result, err := r.Query(ctx, query)
@@ -206,7 +400,7 @@ func decodeSamples(
 	)
 
 	for _, row := range dataset {
-		if len(row) != 5 {
+		if len(row) != 6 {
 			return nil, fmt.Errorf(
 				"unexpected QuestDB row length: %d",
 				len(row),
@@ -224,12 +418,13 @@ func decodeSamples(
 		samples = append(
 			samples,
 			models.Sample{
-				Timestamp: timestamp,
-				PLCID:     row[1].(string),
-				TagID:     row[2].(string),
-				Value:     row[3].(float64),
+				Timestamp:   timestamp,
+				MachineID:   row[1].(string),
+				MachineName: row[2].(string),
+				TagName:     row[3].(string),
+				Value:       row[4].(float64),
 				Quality: models.Quality(
-					uint8(row[4].(float64)),
+					uint8(row[5].(float64)),
 				),
 			},
 		)

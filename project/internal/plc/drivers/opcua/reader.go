@@ -42,10 +42,11 @@ func (c *Client) readTag(
 	result := resp.Results[0]
 
 	return models.Sample{
-		Timestamp: result.SourceTimestamp,
-		PLCID:     tag.PLCID,
-		TagID:     tag.ID,
-		Value:     result.Value.Value(),
-		Quality:   QualityFromStatus(result.Status),
+		Timestamp:   result.SourceTimestamp,
+		MachineID:   fmt.Sprintf("%d", tag.MachineID),
+		MachineName: tag.MachineName,
+		TagName:     tag.Name,
+		Value:       result.Value.Value(),
+		Quality:     QualityFromStatus(result.Status),
 	}, nil
 }

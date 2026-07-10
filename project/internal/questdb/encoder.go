@@ -16,10 +16,11 @@ func encode(
 	for _, sample := range samples {
 		fmt.Fprintf(
 			&b,
-			"%s,plc_id=%s,tag_id=%s value=%s,quality=%di %d\n",
+			"%s,machine_id=%s,machine_name=%s,tag_name=%s value=%s,quality=%di %d\n",
 			table,
-			escapeSymbol(sample.PLCID),
-			escapeSymbol(sample.TagID),
+			escapeSymbol(sample.MachineID),
+			escapeSymbol(sample.MachineName),
+			escapeSymbol(sample.TagName),
 			encodeValue(sample.Value),
 			sample.Quality,
 			sample.Timestamp.UnixNano(),

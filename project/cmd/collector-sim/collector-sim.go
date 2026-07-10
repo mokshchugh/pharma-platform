@@ -37,11 +37,12 @@ func (m *MockDriver) Read(ctx context.Context, tag models.Tag) (models.Sample, e
 	}
 	val := base + math.Sin(float64(time.Now().UnixMilli())/1000.0)*10.0
 	return models.Sample{
-		Timestamp: time.Now(),
-		PLCID:     tag.PLCID,
-		TagID:     tag.ID,
-		Value:     val,
-		Quality:   models.QualityGood,
+		Timestamp:   time.Now(),
+		MachineID:   fmt.Sprintf("%d", tag.MachineID),
+		MachineName: tag.MachineName,
+		TagName:     tag.Name,
+		Value:       val,
+		Quality:     models.QualityGood,
 	}, nil
 }
 

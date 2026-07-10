@@ -28,6 +28,7 @@ func Routes(h *Handlers) *chi.Mux {
 	r.Get("/telemetry/latest/{plc_id}/{tag_id}", h.Telemetry.LatestByPLCAndTag)
 	r.Get("/telemetry/history", h.Telemetry.History)
 	r.Get("/telemetry/aggregate", h.Telemetry.Aggregate)
+	r.Get("/telemetry/stream", h.Telemetry.DataStream)
 
 	r.Get("/plcs", h.PLC.List)
 	r.Get("/plcs/{plc_id}", h.PLC.Get)

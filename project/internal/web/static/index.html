@@ -193,13 +193,13 @@ async function renderDashboard() {
     if (latest.length) {
       f.appendChild($el('div', {className: 'card'},
         $el('h2', {}, 'Latest Telemetry'),
-        table(['PLC', 'Tag', 'Value', 'Quality', 'Timestamp'],
+        table(['Machine', 'Tag', 'Value', 'Quality', 'Timestamp'],
           latest.slice(0, 20).map(s => [
-            s.plcid || s.PLCID,
-            s.tagid || s.TagID,
-            s.value ?? s.Value,
-            s.quality ?? s.Quality,
-            new Date(s.timestamp || s.Timestamp).toLocaleString()
+            s.MachineName || s.MachineID,
+            s.TagName,
+            s.Value,
+            s.Quality,
+            new Date(s.Timestamp).toLocaleString()
           ])
         )
       ));
@@ -257,10 +257,10 @@ async function renderPLCs() {
         $el('h2', {}, 'Latest Values'),
         table(['Tag', 'Value', 'Quality', 'Timestamp'],
           latest.map(s => [
-            s.tagid || s.TagID,
-            s.value ?? s.Value,
-            s.quality ?? s.Quality,
-            new Date(s.timestamp || s.Timestamp).toLocaleString()
+            s.TagName,
+            s.Value,
+            s.Quality,
+            new Date(s.Timestamp).toLocaleString()
           ])
         )
       ));
@@ -306,13 +306,13 @@ async function showTelemetryTab(tab, contentEl) {
       const data = await get('/telemetry/latest');
       contentEl.innerHTML = '';
       contentEl.appendChild($el('div', {className: 'card'},
-        table(['PLC', 'Tag', 'Value', 'Quality', 'Timestamp'],
+        table(['Machine', 'Tag', 'Value', 'Quality', 'Timestamp'],
           data.map(s => [
-            s.plcid || s.PLCID,
-            s.tagid || s.TagID,
-            s.value ?? s.Value,
-            s.quality ?? s.Quality,
-            new Date(s.timestamp || s.Timestamp).toLocaleString()
+            s.MachineName || s.MachineID,
+            s.TagName,
+            s.Value,
+            s.Quality,
+            new Date(s.Timestamp).toLocaleString()
           ])
         )
       ));
@@ -326,10 +326,10 @@ async function showTelemetryTab(tab, contentEl) {
     contentEl.innerHTML = `
       <div class="card">
         <div class="controls">
-          <label>PLC</label>
+          <label>Machine</label>
           <select id="hist-plc">${plcOptions}</select>
           <label>Tag</label>
-          <input type="text" id="hist-tag" placeholder="tag-id" value="${state.histTag || ''}" style="width:120px">
+          <input type="text" id="hist-tag" placeholder="tag name" value="${state.histTag || ''}" style="width:120px">
           <label>From</label>
           <input type="datetime-local" id="hist-start">
           <label>To</label>
@@ -345,10 +345,10 @@ async function showTelemetryTab(tab, contentEl) {
     contentEl.innerHTML = `
       <div class="card">
         <div class="controls" style="flex-wrap:wrap">
-          <label>PLC</label>
+          <label>Machine</label>
           <select id="agg-plc">${plcOptions}</select>
           <label>Tag</label>
-          <input type="text" id="agg-tag" placeholder="tag-id" style="width:120px">
+          <input type="text" id="agg-tag" placeholder="tag name" style="width:120px">
           <label>Interval</label>
           <select id="agg-interval">
             <option value="1m">1 Minute</option>
@@ -381,13 +381,13 @@ async function queryHistory() {
   try {
     const data = await get(`/telemetry/history?plc_id=${plc}&tag_id=${tag}&start=${start}:00Z&end=${end}:00Z`);
     el.innerHTML = '';
-    el.appendChild(table(['Timestamp', 'PLC', 'Tag', 'Value', 'Quality'],
+    el.appendChild(table(['Timestamp', 'Machine', 'Tag', 'Value', 'Quality'],
       data.map(s => [
-        new Date(s.timestamp || s.Timestamp).toLocaleString(),
-        s.plcid || s.PLCID,
-        s.tagid || s.TagID,
-        s.value ?? s.Value,
-        s.quality ?? s.Quality
+        new Date(s.Timestamp).toLocaleString(),
+        s.MachineName || s.MachineID,
+        s.TagName,
+        s.Value,
+        s.Quality
       ])
     ));
   } catch(e) {

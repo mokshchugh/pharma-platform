@@ -41,11 +41,12 @@ func (m *mockDriver) Read(ctx context.Context, tag models.Tag) (models.Sample, e
 	}
 	val := base + m.offset + math.Sin(float64(time.Now().UnixMilli())/1000.0)*10.0
 	return models.Sample{
-		Timestamp: time.Now(),
-		PLCID:     tag.PLCID,
-		TagID:     tag.ID,
-		Value:     val,
-		Quality:   models.QualityGood,
+		Timestamp:   time.Now(),
+		MachineID:   fmt.Sprintf("%d", tag.MachineID),
+		MachineName: tag.MachineName,
+		TagName:     tag.Name,
+		Value:       val,
+		Quality:     models.QualityGood,
 	}, nil
 }
 
@@ -70,7 +71,7 @@ func main() {
 
 	if err := store.MigratePostgres(ctx, postgresClient,
 		"deploy/postgres/init",
-		"deploy/postgres/init",
+		"deploy/postgres/seed",
 		true,
 	); err != nil {
 		log.Fatal(err)

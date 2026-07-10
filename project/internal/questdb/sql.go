@@ -54,6 +54,17 @@ func (c *Client) ExecSQL(ctx context.Context, query string) error {
 	return nil
 }
 
+func splitStatements(s string) []string {
+	var stmts []string
+	for _, part := range strings.Split(s, ";") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			stmts = append(stmts, part)
+		}
+	}
+	return stmts
+}
+
 func (c *Client) MigrateDir(ctx context.Context, dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -75,13 +86,13 @@ func (c *Client) MigrateDir(ctx context.Context, dir string) error {
 			return fmt.Errorf("read %s: %w", path, err)
 		}
 
-		stmt := strings.TrimSpace(string(content))
-		if stmt == "" {
-			continue
-		}
-
-		if err := c.ExecSQL(ctx, stmt); err != nil {
-			return fmt.Errorf("questdb migration %s: %w", entry.Name(), err)
+		for _, stmt := range splitStatements(string(content)) {
+			if stmt == "" {
+				continue
+			}
+			if err := c.ExecSQL(ctx, stmt); err != nil {
+				return fmt.Errorf("questdb migration %s: %w", entry.Name(), err)
+			}
 		}
 	}
 

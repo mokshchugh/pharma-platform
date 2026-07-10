@@ -15,6 +15,7 @@ coverage.out
 /collector-sim
 /quest-simulator
 /dev-mode
+/project/migrate
 
 # Node
 node_modules/

@@ -6,8 +6,9 @@ import "time"
 type Sample struct {
 	Timestamp time.Time
 
-	PLCID string
-	TagID string
+	MachineID   string
+	MachineName string
+	TagName     string
 
 	Value any
 

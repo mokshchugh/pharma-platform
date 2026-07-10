@@ -17,11 +17,12 @@ func (m *mockDriver) Connect(ctx context.Context) error { return nil }
 func (m *mockDriver) Close() error                     { return nil }
 func (m *mockDriver) Read(ctx context.Context, tag models.Tag) (models.Sample, error) {
 	return models.Sample{
-		Timestamp: time.Now(),
-		PLCID:     tag.PLCID,
-		TagID:     tag.ID,
-		Value:     42.0,
-		Quality:   models.QualityGood,
+		Timestamp:   time.Now(),
+		MachineID:   fmt.Sprintf("%d", tag.MachineID),
+		MachineName: tag.MachineName,
+		TagName:     tag.Name,
+		Value:       42.0,
+		Quality:     models.QualityGood,
 	}, nil
 }
 

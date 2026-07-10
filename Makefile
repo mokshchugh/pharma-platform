@@ -20,7 +20,10 @@ api:
 	cd project && go run cmd/api/main.go
 
 sim:
-	cd project && go run cmd/collector-sim/main.go
+	cd project && go run cmd/collector-sim/collector-sim.go
+
+migrate:
+	cd project && go run cmd/migrate/main.go
 
 seed:
 	cd project && go run cmd/seed/main.go
@@ -31,4 +34,4 @@ build:
 prod:
 	cd project && go run cmd/pharma-platform/main.go
 
-.PHONY: setup up up-all down logs dev api sim seed build prod
+.PHONY: setup up up-all down logs dev api sim migrate seed build prod
