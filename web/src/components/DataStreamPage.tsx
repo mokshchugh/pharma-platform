@@ -1,6 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 const RESOLUTIONS = ["raw", "1m", "1h", "1d", "1w"] as const;
+const LIVE_WINDOWS = [
+  { label: "Last 15 Minutes", ms: 15 * 60 * 1000 },
+  { label: "Last 1 Hour", ms: 3600000 },
+  { label: "Last 4 Hours", ms: 4 * 3600000 },
+  { label: "Last 8 Hours", ms: 8 * 3600000 },
+  { label: "Last 24 Hours", ms: 24 * 3600000 },
+] as const;
 
 function nowISO() {
   const d = new Date();
@@ -44,6 +55,7 @@ interface StreamResponse {
 
 interface MachineOption {
   id: string;
+  machine_id: number;
   machine_name: string;
 }
 
@@ -53,60 +65,201 @@ interface TagOption {
 }
 
 export default function DataStreamPage() {
-  const [resolution, setResolution] = useState<string>("1m");
-  const [start, setStart] = useState(hoursAgoISO(1));
-  const [end, setEnd] = useState(nowISO());
+  const [mode, setMode] = useState<"live" | "range">("live");
+  const [resolution, setResolution] = useState<string>("raw");
+
+  const [pollingPaused, setPollingPaused] = useState(false);
+
+  const [liveWindow, setLiveWindow] = useState(3600000);
+
+  const [draftFrom, setDraftFrom] = useState(hoursAgoISO(1));
+  const [draftTo, setDraftTo] = useState(nowISO());
+  const [appliedFrom, setAppliedFrom] = useState("");
+  const [appliedTo, setAppliedTo] = useState("");
+
   const [machine, setMachine] = useState("");
   const [tag, setTag] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize] = useState(100);
 
   const [data, setData] = useState<StreamResponse | null>(null);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const [machineOptions, setMachineOptions] = useState<MachineOption[]>([]);
   const [tagOptions, setTagOptions] = useState<TagOption[]>([]);
 
+  const stateRef = useRef({
+    mode, resolution, machine, tag, liveWindow, appliedFrom, appliedTo, page, pageSize, pollingPaused,
+  });
+  const tagRef = useRef(tag);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const prevMachineRef = useRef(machine);
+
+  useEffect(() => {
+    stateRef.current = {
+      mode, resolution, machine, tag, liveWindow, appliedFrom, appliedTo, page, pageSize, pollingPaused,
+    };
+    tagRef.current = tag;
+  });
+
   useEffect(() => {
     fetch("/plcs")
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`GET /plcs ${r.status}`);
+        return r.json();
+      })
       .then((list: MachineOption[]) => setMachineOptions(list))
-      .catch(() => {});
-    fetch("/tags")
-      .then((r) => r.json())
-      .then((list: TagOption[]) => setTagOptions(list))
-      .catch(() => {});
+      .catch((e) => console.error("Machine fetch failed:", e));
   }, []);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  useEffect(() => {
+    let cancelled = false;
+
+    const url = machine ? `/tags?machine_id=${machine}` : "/tags";
+
+    fetch(url)
+      .then((r) => {
+        if (!r.ok) throw new Error(`GET ${url} ${r.status}`);
+        return r.json();
+      })
+      .then((list: TagOption[]) => {
+        if (cancelled) return;
+        const deduped = machine ? list : dedupeTags(list);
+        setTagOptions(deduped);
+        const currentTag = tagRef.current;
+        if (currentTag && !deduped.some((t) => t.name === currentTag)) {
+          setTag("");
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setTagOptions([]);
+          console.error("Tag fetch failed:", e);
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [machine]);
+
+  const doFetch = useCallback(async () => {
+    const s = stateRef.current;
+
+    if (s.mode === "range" && !s.appliedFrom) return;
+
+    if (s.mode === "range" && new Date(s.appliedTo).getTime() <= Date.now()) {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    }
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setError("");
 
+    let start: string;
+    let end: string;
+
+    if (s.mode === "live") {
+      const now = Date.now();
+      end = new Date(now).toISOString();
+      start = new Date(now - s.liveWindow).toISOString();
+    } else {
+      const appliedToTime = new Date(s.appliedTo).getTime();
+      const now = Date.now();
+      end = new Date(Math.min(appliedToTime, now)).toISOString();
+      start = new Date(s.appliedFrom).toISOString();
+    }
+
     const params = new URLSearchParams({
-      resolution,
-      start: new Date(start).toISOString(),
-      end: new Date(end).toISOString(),
-      page: String(page),
-      page_size: String(pageSize),
+      resolution: s.resolution,
+      start,
+      end,
+      page: String(s.page),
+      page_size: String(s.pageSize),
     });
-    if (machine) params.set("machine", machine);
-    if (tag) params.set("plc", tag);
+    if (s.machine) params.set("machine", s.machine);
+    if (s.tag) params.set("plc", s.tag);
 
     try {
-      const res = await fetch(`/telemetry/stream?${params}`);
+      const res = await fetch(`/telemetry/stream?${params}`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
       if (!res.ok) {
         const text = await res.text();
         throw new Error(text || res.statusText);
       }
       const json: StreamResponse = await res.json();
+      if (controller.signal.aborted) return;
       setData(json);
     } catch (e: unknown) {
+      if (controller.signal.aborted) return;
       setError(e instanceof Error ? e.message : "Request failed");
-    } finally {
-      setLoading(false);
     }
-  }, [resolution, start, end, machine, tag, page, pageSize]);
+  }, []);
+
+  useEffect(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+
+    const s = stateRef.current;
+    const shouldPoll = !s.pollingPaused && (s.mode === "live" || (s.mode === "range" && s.appliedFrom !== "" && new Date(s.appliedTo).getTime() > Date.now()));
+
+    const machineChanged = machine !== prevMachineRef.current;
+    prevMachineRef.current = machine;
+
+    if (!machineChanged) {
+      doFetch();
+    }
+
+    if (shouldPoll) {
+      intervalRef.current = setInterval(doFetch, 1000);
+    }
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      abortRef.current?.abort();
+      abortRef.current = null;
+    };
+  }, [mode, resolution, machine, tag, liveWindow, appliedFrom, appliedTo, page, pollingPaused, doFetch]);
+
+  function handleModeChange(newMode: "live" | "range") {
+    setMode(newMode);
+    setPage(1);
+  }
+
+  function handleResolutionChange(r: string) {
+    setResolution(r);
+    setPage(1);
+  }
+
+  function handleMachineChange(v: string) {
+    setMachine(v);
+    setPage(1);
+  }
+
+  function handleTagChange(v: string) {
+    setTag(v);
+    setPage(1);
+  }
+
+  function handleLiveWindowChange(v: string) {
+    setLiveWindow(Number(v));
+    setPage(1);
+  }
+
+  function handleApplyRange() {
+    setAppliedFrom(new Date(draftFrom).toISOString());
+    setAppliedTo(new Date(draftTo).toISOString());
+    setPage(1);
+  }
 
   const isAggregate = resolution !== "raw";
   const columns = isAggregate
@@ -116,99 +269,200 @@ export default function DataStreamPage() {
   const totalPages = data ? Math.ceil(data.total / pageSize) : 1;
 
   return (
-    <main style={{ flex: 1, height: "100%", overflow: "auto", padding: "16px" }}>
-      <h2 style={{ marginTop: 0 }}>Data Stream</h2>
+    <main className="flex-1 h-full overflow-auto p-4">
+      <h1 className="text-base font-semibold mb-4">Data Stream</h1>
 
-      <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "16px" }}>
-        <select value={resolution} onChange={(e) => { setResolution(e.target.value); setPage(1); }}>
+      <div className="flex items-center gap-3 flex-wrap mb-3">
+        <div className="flex rounded-sm border border-input overflow-hidden">
+          <button
+            onClick={() => handleModeChange("live")}
+            className={`px-3 py-1 text-xs font-medium transition-colors border-r last:border-r-0 cursor-pointer ${
+              mode === "live"
+                ? "bg-primary text-primary-foreground"
+                : "bg-transparent text-foreground hover:bg-accent"
+            }`}
+          >
+            Live
+          </button>
+          <button
+            onClick={() => handleModeChange("range")}
+            className={`px-3 py-1 text-xs font-medium transition-colors border-r last:border-r-0 cursor-pointer ${
+              mode === "range"
+                ? "bg-primary text-primary-foreground"
+                : "bg-transparent text-foreground hover:bg-accent"
+            }`}
+          >
+            Time Range
+          </button>
+        </div>
+
+        <div className="w-px h-6 bg-border" />
+
+        <div className="flex rounded-sm border border-input overflow-hidden">
           {RESOLUTIONS.map((r) => (
-            <option key={r} value={r}>
-              {r === "raw" ? "Raw" : `${r}`}
-            </option>
+            <button
+              key={r}
+              onClick={() => handleResolutionChange(r)}
+              className={`px-3 py-1 text-xs font-medium transition-colors border-r last:border-r-0 cursor-pointer ${
+                resolution === r
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-transparent text-foreground hover:bg-accent"
+              }`}
+            >
+              {r === "raw" ? "Raw" : r}
+            </button>
           ))}
-        </select>
+        </div>
 
-        <label>
-          Start{" "}
-          <input type="datetime-local" value={start} onChange={(e) => { setStart(e.target.value); setPage(1); }} />
-        </label>
+        <div className="w-px h-6 bg-border" />
 
-        <label>
-          End{" "}
-          <input type="datetime-local" value={end} onChange={(e) => { setEnd(e.target.value); setPage(1); }} />
-        </label>
-
-        <select value={machine} onChange={(e) => { setMachine(e.target.value); setPage(1); }}>
-          <option value="">Machine (all)</option>
-          {machineOptions.map((m) => (
-            <option key={m.id} value={m.id}>{m.machine_name}</option>
-          ))}
-        </select>
-
-        <select value={tag} onChange={(e) => { setTag(e.target.value); setPage(1); }}>
-          <option value="">Tag (all)</option>
-          {tagOptions.map((t) => (
-            <option key={t.id} value={t.name}>{t.name}</option>
-          ))}
-        </select>
-
-        <button onClick={fetchData} disabled={loading}>
-          {loading ? "Loading..." : "Query"}
-        </button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setPollingPaused((v) => !v)}
+        >
+          {pollingPaused ? "Resume" : "Pause"}
+        </Button>
       </div>
 
-      {error && <p style={{ color: "#c00" }}>{error}</p>}
+      <div className="flex items-center gap-3 flex-wrap mb-4">
+        <Select value={machine} onValueChange={handleMachineChange}>
+          <SelectTrigger className="w-40">
+            <SelectValue placeholder="Machine (all)" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">Machine (all)</SelectItem>
+            {machineOptions.map((m) => (
+              <SelectItem key={m.id} value={String(m.machine_id)}>{m.machine_name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={tag} onValueChange={handleTagChange}>
+          <SelectTrigger className="w-40">
+            <SelectValue placeholder="Tag (all)" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">Tag (all)</SelectItem>
+            {tagOptions.map((t) => (
+              <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <div className="w-px h-6 bg-border" />
+
+        {mode === "live" ? (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">Window</span>
+            <Select value={String(liveWindow)} onValueChange={handleLiveWindowChange}>
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {LIVE_WINDOWS.map((w) => (
+                  <SelectItem key={w.ms} value={String(w.ms)}>{w.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">From</span>
+            <Input
+              type="datetime-local"
+              value={draftFrom}
+              onChange={(e) => setDraftFrom(e.target.value)}
+              className="w-44"
+            />
+            <span className="text-xs text-muted-foreground">To</span>
+            <Input
+              type="datetime-local"
+              value={draftTo}
+              onChange={(e) => setDraftTo(e.target.value)}
+              className="w-44"
+            />
+            <Button onClick={handleApplyRange} size="sm" variant="outline">
+              Apply Range
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {error && <p className="text-sm text-destructive mb-2">{error}</p>}
 
       {data && (
         <>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", fontSize: "0.875rem", width: "100%" }}>
-              <thead>
-                <tr>
+          <div className="border rounded">
+            <Table>
+              <TableHeader>
+                <TableRow>
                   {columns.map((col) => (
-                    <th key={col} style={{ textAlign: "left", padding: "6px 10px", borderBottom: "1px solid #ccc", whiteSpace: "nowrap" }}>
-                      {col}
-                    </th>
+                    <TableHead key={col}>{col}</TableHead>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {data.data.length === 0 ? (
-                  <tr>
-                    <td colSpan={columns.length} style={{ padding: "16px", textAlign: "center", color: "#999" }}>
+                  <TableRow>
+                    <TableCell colSpan={columns.length} className="text-center text-muted-foreground py-6">
                       No data
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ) : (
                   (data.data as (RawRow | AggregateRow)[]).map((row, i) => (
-                    <tr key={i}>
+                    <TableRow key={i}>
                       {columns.map((col) => (
-                        <td key={col} style={{ padding: "4px 10px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>
+                        <TableCell key={col} className="whitespace-nowrap font-mono text-xs">
                           {renderCell(row, col)}
-                        </td>
+                        </TableCell>
                       ))}
-                    </tr>
+                    </TableRow>
                   ))
                 )}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "12px" }}>
-            <button disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
-              Previous
-            </button>
-            <span>
+          <div className="flex items-center justify-between mt-3">
+            <span className="text-xs text-muted-foreground">
               Page {data.page} of {totalPages} ({data.total} rows)
             </span>
-            <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
-              Next
-            </button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
           </div>
         </>
       )}
     </main>
   );
+}
+
+function dedupeTags(tags: TagOption[]): TagOption[] {
+  const seen = new Set<string>();
+  const result: TagOption[] = [];
+  for (const t of tags) {
+    if (!seen.has(t.name)) {
+      seen.add(t.name);
+      result.push(t);
+    }
+  }
+  return result;
 }
 
 function renderCell(row: RawRow | AggregateRow, col: string): string {

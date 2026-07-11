@@ -223,7 +223,7 @@ WHERE 1=1`, table)
 		start.UTC().Format(time.RFC3339Nano),
 		end.UTC().Format(time.RFC3339Nano),
 	)
-	query += " ORDER BY timestamp, machine_id, tag_name"
+	query += " ORDER BY timestamp DESC, machine_id ASC, tag_name ASC"
 	query += fmt.Sprintf(" LIMIT %d, %d", offset, pageSize)
 
 	result, err := r.Query(ctx, query)
@@ -288,7 +288,7 @@ WHERE 1=1`, table)
 		start.UTC().Format(time.RFC3339Nano),
 		end.UTC().Format(time.RFC3339Nano),
 	)
-	query += " ORDER BY timestamp, machine_id, tag_name"
+	query += " ORDER BY timestamp DESC, machine_id ASC, tag_name ASC"
 	query += fmt.Sprintf(" LIMIT %d, %d", offset, pageSize)
 
 	result, err := r.Query(ctx, query)

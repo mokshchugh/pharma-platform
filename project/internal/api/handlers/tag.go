@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"pharma-platform/internal/models"
 
@@ -11,6 +12,7 @@ import (
 
 type TagStore interface {
 	GetTags() []models.Tag
+	GetTagsByMachineID(machineID int) []models.Tag
 	GetTag(id string) *models.Tag
 }
 
@@ -51,9 +53,21 @@ func tagToResponse(t models.Tag) TagResponse {
 }
 
 func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
-	tags := h.store.GetTags()
-	resp := make([]TagResponse, 0, len(tags))
+	machineIDStr := r.URL.Query().Get("machine_id")
 
+	var tags []models.Tag
+	if machineIDStr != "" {
+		machineID, err := strconv.Atoi(machineIDStr)
+		if err != nil || machineID < 1 {
+			http.Error(w, "invalid machine_id", http.StatusBadRequest)
+			return
+		}
+		tags = h.store.GetTagsByMachineID(machineID)
+	} else {
+		tags = h.store.GetTags()
+	}
+
+	resp := make([]TagResponse, 0, len(tags))
 	for _, t := range tags {
 		resp = append(resp, tagToResponse(t))
 	}

@@ -26,7 +26,7 @@ func (s *MachineStore) GetPLCs() []models.PLC {
 
 	rows, err := db.Query(
 		`SELECT id, machine_name, protocol, COALESCE(ip_address, ''), COALESCE(port, 0), enabled
-		 FROM machines ORDER BY id`,
+		 FROM machines WHERE enabled = true ORDER BY id`,
 	)
 	if err != nil {
 		return nil

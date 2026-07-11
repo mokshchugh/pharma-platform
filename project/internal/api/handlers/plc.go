@@ -3,6 +3,8 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"pharma-platform/internal/models"
 
@@ -16,9 +18,10 @@ type PLCStore interface {
 }
 
 type PLCResponse struct {
-	ID     string          `json:"id"`
-	Name   string          `json:"machine_name"`
-	Driver models.DriverType `json:"driver"`
+	ID        string          `json:"id"`
+	MachineID int             `json:"machine_id"`
+	Name      string          `json:"machine_name"`
+	Driver    models.DriverType `json:"driver"`
 }
 
 type PLCStatusResponse struct {
@@ -42,9 +45,10 @@ func (h *PLCHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	for _, p := range plcs {
 		resp = append(resp, PLCResponse{
-			ID:     p.ID,
-			Name:   p.Name,
-			Driver: p.Driver,
+			ID:        p.ID,
+			MachineID: parseMachineNumericID(p.ID),
+			Name:      p.Name,
+			Driver:    p.Driver,
 		})
 	}
 
@@ -61,9 +65,10 @@ func (h *PLCHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := PLCResponse{
-		ID:     plc.ID,
-		Name:   plc.Name,
-		Driver: plc.Driver,
+		ID:        plc.ID,
+		MachineID: parseMachineNumericID(plc.ID),
+		Name:      plc.Name,
+		Driver:    plc.Driver,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -95,6 +100,18 @@ func (h *PLCHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func parseMachineNumericID(id string) int {
+	parts := strings.SplitN(id, "-", 2)
+	if len(parts) != 2 {
+		return 0
+	}
+	n, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 func (h *PLCHandler) ListTags(w http.ResponseWriter, r *http.Request) {

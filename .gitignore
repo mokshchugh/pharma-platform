@@ -16,6 +16,10 @@ coverage.out
 /quest-simulator
 /dev-mode
 /project/migrate
+/project/dev-mode
+/project/api
+/project/collector-sim
+/project/pharma-platform
 
 # Node
 node_modules/
