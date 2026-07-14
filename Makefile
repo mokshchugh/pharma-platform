@@ -23,7 +23,13 @@ logs:
 
 dev:
 	$(PORT_CHECK)
-	cd project && go build -o dev-mode cmd/dev-mode/main.go && exec ./dev-mode
+	cd project && go build -o dev-mode cmd/dev-mode/main.go
+	cd project && { ./dev-mode & DEV_PID=$$!; }; \
+		cd ../web && npm run dev; \
+		STATUS=$$?; \
+		kill $$DEV_PID 2>/dev/null; \
+		wait $$DEV_PID 2>/dev/null; \
+		exit $$STATUS
 
 api:
 	$(PORT_CHECK)

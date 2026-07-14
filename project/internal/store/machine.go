@@ -112,6 +112,73 @@ func (s *MachineStore) GetTagsByPLC(plcID string) []models.Tag {
 	return tags
 }
 
+type MachineRow struct {
+	ID             int
+	MachineName    string
+	Brand          string
+	Model          string
+	Protocol       string
+	Enabled        bool
+	ConfiguredTags int
+	EnabledTags    int
+}
+
+func (s *MachineStore) GetAllMachines() ([]MachineRow, error) {
+	db := s.client.DB()
+	if db == nil {
+		return nil, fmt.Errorf("database not connected")
+	}
+
+	rows, err := db.Query(
+		`SELECT m.id, m.machine_name, m.brand, m.model, m.protocol, m.enabled,
+		        COUNT(t.id) AS configured_tags,
+		        COUNT(t.id) FILTER (WHERE t.enabled = true) AS enabled_tags
+		 FROM machines m
+		 LEFT JOIN tags t ON t.machine_id = m.id
+		 GROUP BY m.id
+		 ORDER BY m.id`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var machines []MachineRow
+	for rows.Next() {
+		var m MachineRow
+		if err := rows.Scan(&m.ID, &m.MachineName, &m.Brand, &m.Model, &m.Protocol, &m.Enabled, &m.ConfiguredTags, &m.EnabledTags); err != nil {
+			continue
+		}
+		machines = append(machines, m)
+	}
+
+	return machines, nil
+}
+
+func (s *MachineStore) GetMachine(id int) (*MachineRow, error) {
+	db := s.client.DB()
+	if db == nil {
+		return nil, fmt.Errorf("database not connected")
+	}
+
+	var m MachineRow
+	err := db.QueryRow(
+		`SELECT m.id, m.machine_name, m.brand, m.model, m.protocol, m.enabled,
+		        COUNT(t.id) AS configured_tags,
+		        COUNT(t.id) FILTER (WHERE t.enabled = true) AS enabled_tags
+		 FROM machines m
+		 LEFT JOIN tags t ON t.machine_id = m.id
+		 WHERE m.id = $1
+		 GROUP BY m.id`,
+		id,
+	).Scan(&m.ID, &m.MachineName, &m.Brand, &m.Model, &m.Protocol, &m.Enabled, &m.ConfiguredTags, &m.EnabledTags)
+	if err != nil {
+		return nil, err
+	}
+
+	return &m, nil
+}
+
 func machineIDFromString(s string) int {
 	parts := strings.SplitN(s, "-", 2)
 	if len(parts) != 2 {

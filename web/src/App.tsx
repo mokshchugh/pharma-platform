@@ -4,30 +4,54 @@ import Sidebar from "./components/Sidebar";
 import HomePage from "./components/HomePage";
 import DataStreamPage from "./components/DataStreamPage";
 import MachinesPage from "./components/MachinesPage";
+import MachineDetailPage from "./components/MachineDetailPage";
 import AlarmsPage from "./components/AlarmsPage";
 import ManagePLCsPage from "./components/ManagePLCsPage";
 import ControlsPage from "./components/ControlsPage";
 
 export default function App() {
   const [page, setPage] = useState("Home");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [pageParams, setPageParams] = useState<Record<string, string>>({});
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
 
-  function handleNavigate(label: string) {
+  function handleNavigate(label: string, params?: Record<string, string>) {
     setPage(label);
-    setSidebarOpen(false);
+    if (params) setPageParams(params);
+    setMobileDrawerOpen(false);
+  }
+
+  function renderPage() {
+    switch (page) {
+      case "Home":
+        return <HomePage />;
+      case "Data Stream":
+        return <DataStreamPage />;
+      case "Machines":
+        return <MachinesPage onNavigate={handleNavigate} />;
+      case "MachineDetail":
+        return (
+          <MachineDetailPage
+            machineId={pageParams.id ?? ""}
+            onBack={() => handleNavigate("Machines")}
+          />
+        );
+      case "Alarms":
+        return <AlarmsPage />;
+      case "Manage PLCs":
+        return <ManagePLCsPage />;
+      case "Controls":
+        return <ControlsPage />;
+      default:
+        return <HomePage />;
+    }
   }
 
   return (
     <div className="flex flex-col h-dvh">
-      <Header onToggleSidebar={() => setSidebarOpen((v) => !v)} sidebarOpen={sidebarOpen} />
+      <Header onHamburgerClick={() => setMobileDrawerOpen((v) => !v)} />
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar currentPage={page} onNavigate={handleNavigate} open={sidebarOpen} />
-        {page === "Home" && <HomePage />}
-        {page === "Data Stream" && <DataStreamPage />}
-        {page === "Machines" && <MachinesPage />}
-        {page === "Alarms" && <AlarmsPage />}
-        {page === "Manage PLCs" && <ManagePLCsPage />}
-        {page === "Controls" && <ControlsPage />}
+        <Sidebar currentPage={page} onNavigate={handleNavigate} mobileDrawerOpen={mobileDrawerOpen} onMobileClose={() => setMobileDrawerOpen(false)} />
+        {renderPage()}
       </div>
     </div>
   );

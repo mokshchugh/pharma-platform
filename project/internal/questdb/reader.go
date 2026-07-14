@@ -67,6 +67,37 @@ func (r *Reader) Query(
 	return &result, nil
 }
 
+type MachineTimestamp struct {
+	MachineID string
+	Timestamp time.Time
+}
+
+func (r *Reader) LatestTimestamps(ctx context.Context) ([]MachineTimestamp, error) {
+	result, err := r.Query(ctx,
+		`SELECT machine_id, max(timestamp) FROM plc_samples GROUP BY machine_id`,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([]MachineTimestamp, 0, len(result.Dataset))
+	for _, row := range result.Dataset {
+		if len(row) != 2 {
+			continue
+		}
+		ts, err := time.Parse(time.RFC3339Nano, row[1].(string))
+		if err != nil {
+			continue
+		}
+		rows = append(rows, MachineTimestamp{
+			MachineID: row[0].(string),
+			Timestamp: ts,
+		})
+	}
+
+	return rows, nil
+}
+
 func (r *Reader) Latest(
 	ctx context.Context,
 ) ([]models.Sample, error) {
@@ -194,6 +225,104 @@ type StreamResponse struct {
 	Page       int    `json:"page"`
 	PageSize   int    `json:"page_size"`
 	Resolution string `json:"resolution"`
+}
+
+func (r *Reader) StreamRawAll(
+	ctx context.Context,
+	table string,
+	machineID string,
+	tagName string,
+	start time.Time,
+	end time.Time,
+) ([]RawRow, error) {
+	query := fmt.Sprintf(`
+SELECT timestamp, machine_id, machine_name, tag_name, value, quality
+FROM %s
+WHERE 1=1`, table)
+
+	if machineID != "" {
+		query += fmt.Sprintf(" AND machine_id = '%s'", machineID)
+	}
+	if tagName != "" {
+		query += fmt.Sprintf(" AND tag_name = '%s'", tagName)
+	}
+	query += fmt.Sprintf(" AND timestamp BETWEEN '%s' AND '%s'",
+		start.UTC().Format(time.RFC3339Nano),
+		end.UTC().Format(time.RFC3339Nano),
+	)
+	query += " ORDER BY timestamp DESC, machine_id ASC, tag_name ASC"
+
+	result, err := r.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([]RawRow, 0, len(result.Dataset))
+	for _, row := range result.Dataset {
+		if len(row) != 6 {
+			continue
+		}
+		rows = append(rows, RawRow{
+			Timestamp:   row[0].(string),
+			MachineID:   row[1].(string),
+			MachineName: row[2].(string),
+			TagName:     row[3].(string),
+			Value:       row[4].(float64),
+			Quality:     int(row[5].(float64)),
+		})
+	}
+
+	return rows, nil
+}
+
+func (r *Reader) StreamAggregateAll(
+	ctx context.Context,
+	table string,
+	machineID string,
+	tagName string,
+	start time.Time,
+	end time.Time,
+) ([]AggregateRow, error) {
+	query := fmt.Sprintf(`
+SELECT timestamp, machine_id, machine_name, tag_name, min_value, max_value, avg_value, sample_count
+FROM %s
+WHERE 1=1`, table)
+
+	if machineID != "" {
+		query += fmt.Sprintf(" AND machine_id = '%s'", machineID)
+	}
+	if tagName != "" {
+		query += fmt.Sprintf(" AND tag_name = '%s'", tagName)
+	}
+	query += fmt.Sprintf(" AND timestamp BETWEEN '%s' AND '%s'",
+		start.UTC().Format(time.RFC3339Nano),
+		end.UTC().Format(time.RFC3339Nano),
+	)
+	query += " ORDER BY timestamp DESC, machine_id ASC, tag_name ASC"
+
+	result, err := r.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([]AggregateRow, 0, len(result.Dataset))
+	for _, row := range result.Dataset {
+		if len(row) != 8 {
+			continue
+		}
+		rows = append(rows, AggregateRow{
+			Timestamp:   row[0].(string),
+			MachineID:   row[1].(string),
+			MachineName: row[2].(string),
+			TagName:     row[3].(string),
+			MinValue:    row[4].(float64),
+			MaxValue:    row[5].(float64),
+			AvgValue:    row[6].(float64),
+			SampleCount: int64(row[7].(float64)),
+		})
+	}
+
+	return rows, nil
 }
 
 func (r *Reader) StreamRaw(
@@ -431,6 +560,93 @@ func decodeSamples(
 	}
 
 	return samples, nil
+}
+
+func (r *Reader) LatestFromView(
+	ctx context.Context,
+	machineID string,
+	resolution string,
+	tagName string,
+) (*AggregateRow, error) {
+	table := "plc_samples_" + resolution
+	query := fmt.Sprintf(`
+SELECT timestamp, machine_id, machine_name, tag_name, min_value, max_value, avg_value, sample_count
+FROM %s
+WHERE machine_id = '%s' AND tag_name = '%s'
+ORDER BY timestamp DESC
+LIMIT 1`,
+		table, machineID, tagName,
+	)
+
+	result, err := r.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(result.Dataset) == 0 {
+		return nil, nil
+	}
+
+	row := result.Dataset[0]
+	if len(row) != 8 {
+		return nil, nil
+	}
+
+	return &AggregateRow{
+		Timestamp:   row[0].(string),
+		MachineID:   row[1].(string),
+		MachineName: row[2].(string),
+		TagName:     row[3].(string),
+		MinValue:    row[4].(float64),
+		MaxValue:    row[5].(float64),
+		AvgValue:    row[6].(float64),
+		SampleCount: int64(row[7].(float64)),
+	}, nil
+}
+
+func (r *Reader) SeriesFromView(
+	ctx context.Context,
+	machineID string,
+	resolution string,
+	tagName string,
+	start time.Time,
+	end time.Time,
+) ([]AggregateRow, error) {
+	table := "plc_samples_" + resolution
+	query := fmt.Sprintf(`
+SELECT timestamp, machine_id, machine_name, tag_name, min_value, max_value, avg_value, sample_count
+FROM %s
+WHERE machine_id = '%s' AND tag_name = '%s'
+  AND timestamp BETWEEN '%s' AND '%s'
+ORDER BY timestamp ASC`,
+		table, machineID, tagName,
+		start.UTC().Format(time.RFC3339Nano),
+		end.UTC().Format(time.RFC3339Nano),
+	)
+
+	result, err := r.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([]AggregateRow, 0, len(result.Dataset))
+	for _, row := range result.Dataset {
+		if len(row) != 8 {
+			continue
+		}
+		rows = append(rows, AggregateRow{
+			Timestamp:   row[0].(string),
+			MachineID:   row[1].(string),
+			MachineName: row[2].(string),
+			TagName:     row[3].(string),
+			MinValue:    row[4].(float64),
+			MaxValue:    row[5].(float64),
+			AvgValue:    row[6].(float64),
+			SampleCount: int64(row[7].(float64)),
+		})
+	}
+
+	return rows, nil
 }
 
 func decodeAggregate(

@@ -61,6 +61,8 @@ func main() {
 	telemetryHandler := handlers.NewTelemetryHandler(reader)
 	plcHandler := handlers.NewPLCHandler(machineStore)
 	tagHandler := handlers.NewTagHandler(tagStore)
+	machineHandler := handlers.NewMachineHandler(machineStore, reader)
+	analyticsHandler := handlers.NewAnalyticsHandler(tagStore, reader)
 	collectorHandler := handlers.NewCollectorHandler(dummyCollector)
 	alarmHandler := handlers.NewAlarmHandler(alarmStore)
 	systemHandler := handlers.NewSystemHandler(machineStore, alarmStore, dummyCollector)
@@ -69,6 +71,8 @@ func main() {
 		Telemetry: telemetryHandler,
 		PLC:       plcHandler,
 		Tag:       tagHandler,
+		Machine:   machineHandler,
+		Analytics: analyticsHandler,
 		Collector: collectorHandler,
 		Alarms:    alarmHandler,
 		System:    systemHandler,

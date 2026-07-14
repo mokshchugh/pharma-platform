@@ -16,6 +16,7 @@ export default defineConfig({
       '/plcs': 'http://localhost:8081',
       '/tags': 'http://localhost:8081',
       '/health': 'http://localhost:8081',
+      '/api': 'http://localhost:8081',
     },
   },
 })

@@ -14,6 +14,8 @@ type Handlers struct {
 	Collector *handlers.CollectorHandler
 	Alarms    *handlers.AlarmHandler
 	System    *handlers.SystemHandler
+	Machine   *handlers.MachineHandler
+	Analytics *handlers.AnalyticsHandler
 }
 
 func Routes(h *Handlers) *chi.Mux {
@@ -29,6 +31,7 @@ func Routes(h *Handlers) *chi.Mux {
 	r.Get("/telemetry/history", h.Telemetry.History)
 	r.Get("/telemetry/aggregate", h.Telemetry.Aggregate)
 	r.Get("/telemetry/stream", h.Telemetry.DataStream)
+	r.Get("/telemetry/stream/csv", h.Telemetry.DataStreamCSV)
 
 	r.Get("/plcs", h.PLC.List)
 	r.Get("/plcs/{plc_id}", h.PLC.Get)
@@ -45,7 +48,50 @@ func Routes(h *Handlers) *chi.Mux {
 	r.Post("/collector/pause", h.Collector.Pause)
 	r.Post("/collector/resume", h.Collector.Resume)
 
+	r.Get("/api/v1/machines", h.Machine.List)
+	r.Get("/api/v1/machines/{id}", h.Machine.Get)
+	r.Get("/api/v1/machines/{id}/telemetry", h.Analytics.GetTelemetry)
+	r.Get("/api/v1/machines/{id}/analytics", h.Analytics.GetAnalytics)
+
 	r.Handle("/*", web.Handler())
+
+	return r
+}
+
+func RoutesBackend(h *Handlers) *chi.Mux {
+	r := chi.NewRouter()
+
+	r.Get("/health", handlers.Health)
+
+	r.Get("/system/status", h.System.Status)
+
+	r.Get("/telemetry/latest", h.Telemetry.Latest)
+	r.Get("/telemetry/latest/{plc_id}", h.Telemetry.LatestByPLC)
+	r.Get("/telemetry/latest/{plc_id}/{tag_id}", h.Telemetry.LatestByPLCAndTag)
+	r.Get("/telemetry/history", h.Telemetry.History)
+	r.Get("/telemetry/aggregate", h.Telemetry.Aggregate)
+	r.Get("/telemetry/stream", h.Telemetry.DataStream)
+	r.Get("/telemetry/stream/csv", h.Telemetry.DataStreamCSV)
+
+	r.Get("/plcs", h.PLC.List)
+	r.Get("/plcs/{plc_id}", h.PLC.Get)
+	r.Get("/plcs/{plc_id}/status", h.PLC.GetStatus)
+	r.Get("/plcs/{plc_id}/tags", h.PLC.ListTags)
+
+	r.Get("/tags", h.Tag.List)
+	r.Get("/tags/{tag_id}", h.Tag.Get)
+
+	r.Get("/alarms", h.Alarms.List)
+	r.Get("/alarms/active", h.Alarms.ListActive)
+
+	r.Get("/collector/status", h.Collector.Status)
+	r.Post("/collector/pause", h.Collector.Pause)
+	r.Post("/collector/resume", h.Collector.Resume)
+
+	r.Get("/api/v1/machines", h.Machine.List)
+	r.Get("/api/v1/machines/{id}", h.Machine.Get)
+	r.Get("/api/v1/machines/{id}/telemetry", h.Analytics.GetTelemetry)
+	r.Get("/api/v1/machines/{id}/analytics", h.Analytics.GetAnalytics)
 
 	return r
 }

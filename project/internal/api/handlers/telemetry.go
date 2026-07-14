@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"pharma-platform/internal/questdb"
@@ -190,6 +191,94 @@ func (h *TelemetryHandler) DataStream(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *TelemetryHandler) DataStreamCSV(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	resolution := q.Get("resolution")
+	if resolution == "" {
+		http.Error(w, "resolution is required", http.StatusBadRequest)
+		return
+	}
+
+	table, ok := resolutionAllowlist[resolution]
+	if !ok {
+		http.Error(w, "invalid resolution (raw, 1m, 1h, 1d, 1w)", http.StatusBadRequest)
+		return
+	}
+
+	machineID := q.Get("machine")
+	tagName := q.Get("plc")
+
+	start, err := time.Parse(time.RFC3339, q.Get("start"))
+	if err != nil {
+		http.Error(w, "invalid start (use RFC3339)", http.StatusBadRequest)
+		return
+	}
+
+	end, err := time.Parse(time.RFC3339, q.Get("end"))
+	if err != nil {
+		http.Error(w, "invalid end (use RFC3339)", http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", `attachment; filename="telemetry-export.csv"`)
+
+	if resolution == "raw" {
+		rows, err := h.reader.StreamRawAll(r.Context(), table, machineID, tagName, start, end)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		fmt.Fprintln(w, "timestamp,machine_id,machine_name,tag_name,value,quality")
+		for _, row := range rows {
+			fmt.Fprintf(w, "%s,%s,%s,%s,%.4f,%d\n",
+				escapeCSV(row.Timestamp),
+				escapeCSV(row.MachineID),
+				escapeCSV(row.MachineName),
+				escapeCSV(row.TagName),
+				row.Value,
+				row.Quality,
+			)
+		}
+	} else {
+		rows, err := h.reader.StreamAggregateAll(r.Context(), table, machineID, tagName, start, end)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		fmt.Fprintln(w, "timestamp,machine_id,machine_name,tag_name,min_value,max_value,avg_value,sample_count")
+		for _, row := range rows {
+			fmt.Fprintf(w, "%s,%s,%s,%s,%.4f,%.4f,%.4f,%d\n",
+				escapeCSV(row.Timestamp),
+				escapeCSV(row.MachineID),
+				escapeCSV(row.MachineName),
+				escapeCSV(row.TagName),
+				row.MinValue,
+				row.MaxValue,
+				row.AvgValue,
+				row.SampleCount,
+			)
+		}
+	}
+}
+
+func escapeCSV(s string) string {
+	needsQuoting := false
+	for _, c := range s {
+		if c == ',' || c == '"' || c == '\n' || c == '\r' {
+			needsQuoting = true
+			break
+		}
+	}
+	if !needsQuoting {
+		return s
+	}
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
 func parseInt(s string) (int, error) {

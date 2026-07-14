@@ -127,15 +127,19 @@ func main() {
 	telemetryHandler := handlers.NewTelemetryHandler(reader)
 	plcHandler := handlers.NewPLCHandler(machineStore)
 	tagHandler := handlers.NewTagHandler(tagStore)
+	machineHandler := handlers.NewMachineHandler(machineStore, reader)
+	analyticsHandler := handlers.NewAnalyticsHandler(tagStore, reader)
 	collectorAdapter := &handlers.CollectorAdapter{C: collectorService}
 	collectorHandler := handlers.NewCollectorHandler(collectorAdapter)
 	alarmHandler := handlers.NewAlarmHandler(alarmStore)
 	systemHandler := handlers.NewSystemHandler(machineStore, alarmStore, collectorService)
 
-	server := api.NewFull(cfg.API, &api.Handlers{
+	server := api.NewBackend(cfg.API, &api.Handlers{
 		Telemetry: telemetryHandler,
 		PLC:       plcHandler,
 		Tag:       tagHandler,
+		Machine:   machineHandler,
+		Analytics: analyticsHandler,
 		Collector: collectorHandler,
 		Alarms:    alarmHandler,
 		System:    systemHandler,

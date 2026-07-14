@@ -88,6 +88,14 @@ export default function DataStreamPage() {
   const [machineOptions, setMachineOptions] = useState<MachineOption[]>([]);
   const [tagOptions, setTagOptions] = useState<TagOption[]>([]);
 
+  const [csvDialogOpen, setCsvDialogOpen] = useState(false);
+  const [csvMachine, setCsvMachine] = useState("");
+  const [csvTag, setCsvTag] = useState("");
+  const [csvResolution, setCsvResolution] = useState("raw");
+  const [csvFrom, setCsvFrom] = useState(hoursAgoISO(1));
+  const [csvTo, setCsvTo] = useState(nowISO());
+  const [csvTagOptions, setCsvTagOptions] = useState<TagOption[]>([]);
+
   const stateRef = useRef({
     mode, resolution, machine, tag, liveWindow, appliedFrom, appliedTo, page, pageSize, pollingPaused,
   });
@@ -141,6 +149,35 @@ export default function DataStreamPage() {
 
     return () => { cancelled = true; };
   }, [machine]);
+
+  useEffect(() => {
+    if (!csvDialogOpen) return;
+    let cancelled = false;
+
+    const url = csvMachine ? `/tags?machine_id=${csvMachine}` : "/tags";
+
+    fetch(url)
+      .then((r) => {
+        if (!r.ok) throw new Error(`GET ${url} ${r.status}`);
+        return r.json();
+      })
+      .then((list: TagOption[]) => {
+        if (cancelled) return;
+        const deduped = csvMachine ? list : dedupeTags(list);
+        setCsvTagOptions(deduped);
+        if (csvTag && !deduped.some((t) => t.name === csvTag)) {
+          setCsvTag("");
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setCsvTagOptions([]);
+          console.error("CSV tag fetch failed:", e);
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [csvDialogOpen, csvMachine]);
 
   const doFetch = useCallback(async () => {
     const s = stateRef.current;
@@ -261,6 +298,31 @@ export default function DataStreamPage() {
     setPage(1);
   }
 
+  function openCsvDialog() {
+    setCsvMachine(machine);
+    setCsvTag(tag);
+    setCsvResolution(resolution);
+    if (mode === "live") {
+      const now = new Date();
+      setCsvTo(nowISO());
+      setCsvFrom(hoursAgoISO(liveWindow / 3600000));
+    } else {
+      setCsvFrom(draftFrom);
+      setCsvTo(draftTo);
+    }
+    setCsvDialogOpen(true);
+  }
+
+  function handleCsvDownload() {
+    const start = new Date(csvFrom).toISOString();
+    const end = new Date(csvTo).toISOString();
+    const params = new URLSearchParams({ resolution: csvResolution, start, end });
+    if (csvMachine) params.set("machine", csvMachine);
+    if (csvTag) params.set("plc", csvTag);
+    window.open(`/telemetry/stream/csv?${params}`, "_blank");
+    setCsvDialogOpen(false);
+  }
+
   const isAggregate = resolution !== "raw";
   const columns = isAggregate
     ? ["timestamp", "machine_name", "tag_name", "min_value", "max_value", "avg_value", "sample_count"]
@@ -322,6 +384,10 @@ export default function DataStreamPage() {
           onClick={() => setPollingPaused((v) => !v)}
         >
           {pollingPaused ? "Resume" : "Pause"}
+        </Button>
+
+        <Button variant="outline" size="sm" onClick={openCsvDialog}>
+          Download CSV
         </Button>
       </div>
 
@@ -448,6 +514,85 @@ export default function DataStreamPage() {
             </div>
           </div>
         </>
+      )}
+
+      {csvDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-background rounded border shadow-lg w-full max-w-md p-5 mx-4">
+            <h2 className="text-sm font-semibold mb-4">Download CSV</h2>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Machine</label>
+                <Select value={csvMachine} onValueChange={(v) => { setCsvMachine(v); setCsvTag(""); }}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Machine (all)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Machine (all)</SelectItem>
+                    {machineOptions.map((m) => (
+                      <SelectItem key={m.id} value={String(m.machine_id)}>{m.machine_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Tag</label>
+                <Select value={csvTag} onValueChange={setCsvTag}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Tag (all)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Tag (all)</SelectItem>
+                    {csvTagOptions.map((t) => (
+                      <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Resolution</label>
+                <div className="flex rounded-sm border border-input overflow-hidden">
+                  {RESOLUTIONS.map((r) => (
+                    <button
+                      key={r}
+                      onClick={() => setCsvResolution(r)}
+                      className={`px-3 py-1 text-xs font-medium transition-colors border-r last:border-r-0 cursor-pointer ${
+                        csvResolution === r
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-transparent text-foreground hover:bg-accent"
+                      }`}
+                    >
+                      {r === "raw" ? "Raw" : r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
+                  <label className="text-xs text-muted-foreground mb-1 block">From</label>
+                  <Input type="datetime-local" value={csvFrom} onChange={(e) => setCsvFrom(e.target.value)} />
+                </div>
+                <div className="flex-1">
+                  <label className="text-xs text-muted-foreground mb-1 block">To</label>
+                  <Input type="datetime-local" value={csvTo} onChange={(e) => setCsvTo(e.target.value)} />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 mt-5">
+              <Button variant="outline" size="sm" onClick={() => setCsvDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleCsvDownload}>
+                Download
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );
