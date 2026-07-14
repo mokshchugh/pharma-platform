@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type Alarm struct {
@@ -63,6 +65,19 @@ func (s *AlarmStore) ActiveCount() int {
 	return count
 }
 
+func (s *AlarmStore) Acknowledge(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for i := range s.alarms {
+		if s.alarms[i].ID == id {
+			s.alarms[i].Active = false
+			s.alarms[i].AckAt = &now
+			return
+		}
+	}
+}
+
 func (s *AlarmStore) CriticalCount() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -87,6 +102,13 @@ func NewAlarmHandler(store *AlarmStore) *AlarmHandler {
 func (h *AlarmHandler) List(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(h.store.List())
+}
+
+func (h *AlarmHandler) Acknowledge(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	h.store.Acknowledge(idStr)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "acknowledged"})
 }
 
 func (h *AlarmHandler) ListActive(w http.ResponseWriter, r *http.Request) {

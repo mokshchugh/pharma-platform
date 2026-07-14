@@ -179,6 +179,21 @@ func (s *MachineStore) GetMachine(id int) (*MachineRow, error) {
 	return &m, nil
 }
 
+func (s *MachineStore) TogglePLCEnabled(id string, enabled bool) error {
+	db := s.client.DB()
+	if db == nil {
+		return fmt.Errorf("database not connected")
+	}
+
+	dbID := machineIDFromString(id)
+	if dbID == 0 {
+		return fmt.Errorf("invalid plc id: %s", id)
+	}
+
+	_, err := db.Exec(`UPDATE machines SET enabled = $1 WHERE id = $2`, enabled, dbID)
+	return err
+}
+
 func machineIDFromString(s string) int {
 	parts := strings.SplitN(s, "-", 2)
 	if len(parts) != 2 {

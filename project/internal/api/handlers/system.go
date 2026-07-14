@@ -110,6 +110,16 @@ func (s *PLCConfigStore) GetPLC(id string) *models.PLC {
 	return nil
 }
 
+func (s *PLCConfigStore) TogglePLCEnabled(id string, enabled bool) error {
+	for i := range s.plcs {
+		if s.plcs[i].ID == id {
+			s.plcs[i].Enabled = enabled
+			return nil
+		}
+	}
+	return nil
+}
+
 func (s *PLCConfigStore) GetTagsByPLC(plcID string) []models.Tag {
 	var result []models.Tag
 	for i := range s.tags {

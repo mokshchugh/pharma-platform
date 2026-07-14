@@ -11,7 +11,7 @@ interface AnalyticsPoint {
 
 export default function TelemetryChart({ series, unit }: { series: AnalyticsPoint[]; unit: string }) {
   const chartRef = useRef<HTMLDivElement>(null);
-  const instanceRef = useRef<echarts.ECharts>();
+  const instanceRef = useRef<echarts.ECharts | undefined>(undefined);
 
   useEffect(() => {
     if (!chartRef.current) return;
@@ -30,7 +30,7 @@ export default function TelemetryChart({ series, unit }: { series: AnalyticsPoin
     chart.setOption({
       tooltip: {
         trigger: "axis",
-        formatter: (params: { data: number; seriesName: string; axisValue: string }[]) => {
+        formatter: (params: { data: number; seriesName: string; axisValue: string; dataIndex: number }[]) => {
           const idx = params[0]?.dataIndex ?? 0;
           const pt = series[idx];
           if (!pt) return "";

@@ -15,13 +15,17 @@ type PLCStore interface {
 	GetPLCs() []models.PLC
 	GetPLC(id string) *models.PLC
 	GetTagsByPLC(plcID string) []models.Tag
+	TogglePLCEnabled(id string, enabled bool) error
 }
 
 type PLCResponse struct {
-	ID        string          `json:"id"`
-	MachineID int             `json:"machine_id"`
-	Name      string          `json:"machine_name"`
+	ID        string           `json:"id"`
+	MachineID int              `json:"machine_id"`
+	Name      string           `json:"machine_name"`
 	Driver    models.DriverType `json:"driver"`
+	IPAddress string           `json:"ip_address"`
+	Port      uint16           `json:"port"`
+	Enabled   bool             `json:"enabled"`
 }
 
 type PLCStatusResponse struct {
@@ -49,6 +53,9 @@ func (h *PLCHandler) List(w http.ResponseWriter, r *http.Request) {
 			MachineID: parseMachineNumericID(p.ID),
 			Name:      p.Name,
 			Driver:    p.Driver,
+			IPAddress: p.IPAddress,
+			Port:      p.Port,
+			Enabled:   p.Enabled,
 		})
 	}
 
@@ -112,6 +119,27 @@ func parseMachineNumericID(id string) int {
 		return 0
 	}
 	return n
+}
+
+type ToggleRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+func (h *PLCHandler) ToggleEnabled(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "plc_id")
+	var req ToggleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.store.TogglePLCEnabled(id, req.Enabled); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"status": "ok", "enabled": req.Enabled})
 }
 
 func (h *PLCHandler) ListTags(w http.ResponseWriter, r *http.Request) {

@@ -13,6 +13,9 @@ const LIVE_WINDOWS = [
   { label: "Last 24 Hours", ms: 24 * 3600000 },
 ] as const;
 
+type Resolution = (typeof RESOLUTIONS)[number];
+type ColumnKey = "timestamp" | "machine_name" | "tag_name" | "value" | "quality" | "min_value" | "max_value" | "avg_value" | "sample_count";
+
 function nowISO() {
   const d = new Date();
   d.setSeconds(0, 0);
@@ -67,9 +70,7 @@ interface TagOption {
 export default function DataStreamPage() {
   const [mode, setMode] = useState<"live" | "range">("live");
   const [resolution, setResolution] = useState<string>("raw");
-
   const [pollingPaused, setPollingPaused] = useState(false);
-
   const [liveWindow, setLiveWindow] = useState(3600000);
 
   const [draftFrom, setDraftFrom] = useState(hoursAgoISO(1));
@@ -84,6 +85,7 @@ export default function DataStreamPage() {
 
   const [data, setData] = useState<StreamResponse | null>(null);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const [machineOptions, setMachineOptions] = useState<MachineOption[]>([]);
   const [tagOptions, setTagOptions] = useState<TagOption[]>([]);
@@ -91,7 +93,7 @@ export default function DataStreamPage() {
   const [csvDialogOpen, setCsvDialogOpen] = useState(false);
   const [csvMachine, setCsvMachine] = useState("");
   const [csvTag, setCsvTag] = useState("");
-  const [csvResolution, setCsvResolution] = useState("raw");
+  const [csvResolution, setCsvResolution] = useState<Resolution>("raw");
   const [csvFrom, setCsvFrom] = useState(hoursAgoISO(1));
   const [csvTo, setCsvTo] = useState(nowISO());
   const [csvTagOptions, setCsvTagOptions] = useState<TagOption[]>([]);
@@ -115,9 +117,9 @@ export default function DataStreamPage() {
     fetch("/plcs")
       .then((r) => {
         if (!r.ok) throw new Error(`GET /plcs ${r.status}`);
-        return r.json();
+        return r.json() as Promise<MachineOption[]>;
       })
-      .then((list: MachineOption[]) => setMachineOptions(list))
+      .then((list) => setMachineOptions(list))
       .catch((e) => console.error("Machine fetch failed:", e));
   }, []);
 
@@ -129,9 +131,9 @@ export default function DataStreamPage() {
     fetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(`GET ${url} ${r.status}`);
-        return r.json();
+        return r.json() as Promise<TagOption[]>;
       })
-      .then((list: TagOption[]) => {
+      .then((list) => {
         if (cancelled) return;
         const deduped = machine ? list : dedupeTags(list);
         setTagOptions(deduped);
@@ -159,9 +161,9 @@ export default function DataStreamPage() {
     fetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(`GET ${url} ${r.status}`);
-        return r.json();
+        return r.json() as Promise<TagOption[]>;
       })
-      .then((list: TagOption[]) => {
+      .then((list) => {
         if (cancelled) return;
         const deduped = csvMachine ? list : dedupeTags(list);
         setCsvTagOptions(deduped);
@@ -196,6 +198,7 @@ export default function DataStreamPage() {
     abortRef.current = controller;
 
     setError("");
+    setLoading(true);
 
     let start: string;
     let end: string;
@@ -234,6 +237,8 @@ export default function DataStreamPage() {
     } catch (e: unknown) {
       if (controller.signal.aborted) return;
       setError(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -277,6 +282,10 @@ export default function DataStreamPage() {
     setPage(1);
   }
 
+  function handleCsvResolutionChange(r: Resolution) {
+    setCsvResolution(r);
+  }
+
   function handleMachineChange(v: string) {
     setMachine(v);
     setPage(1);
@@ -301,9 +310,8 @@ export default function DataStreamPage() {
   function openCsvDialog() {
     setCsvMachine(machine);
     setCsvTag(tag);
-    setCsvResolution(resolution);
+    setCsvResolution(resolution as Resolution);
     if (mode === "live") {
-      const now = new Date();
       setCsvTo(nowISO());
       setCsvFrom(hoursAgoISO(liveWindow / 3600000));
     } else {
@@ -324,7 +332,7 @@ export default function DataStreamPage() {
   }
 
   const isAggregate = resolution !== "raw";
-  const columns = isAggregate
+  const columns: ColumnKey[] = isAggregate
     ? ["timestamp", "machine_name", "tag_name", "min_value", "max_value", "avg_value", "sample_count"]
     : ["timestamp", "machine_name", "tag_name", "value", "quality"];
 
@@ -455,7 +463,22 @@ export default function DataStreamPage() {
         )}
       </div>
 
-      {error && <p className="text-sm text-destructive mb-2">{error}</p>}
+      {error && (
+        <div className="flex items-center gap-2 mb-2">
+          <p className="text-sm text-destructive">{error}</p>
+          <Button variant="outline" size="sm" onClick={() => doFetch()}>Retry</Button>
+        </div>
+      )}
+
+      {loading && !data && (
+        <div className="animate-pulse space-y-2">
+          <div className="h-7 bg-muted rounded w-full" />
+          <div className="h-7 bg-muted rounded w-full" />
+          <div className="h-7 bg-muted rounded w-3/4" />
+          <div className="h-7 bg-muted rounded w-full" />
+          <div className="h-7 bg-muted rounded w-5/6" />
+        </div>
+      )}
 
       {data && (
         <>
@@ -516,6 +539,10 @@ export default function DataStreamPage() {
         </>
       )}
 
+      {!data && !loading && !error && (
+        <p className="text-sm text-muted-foreground">Configure filters and select a time range to view data.</p>
+      )}
+
       {csvDialogOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-background rounded border shadow-lg w-full max-w-md p-5 mx-4">
@@ -558,7 +585,7 @@ export default function DataStreamPage() {
                   {RESOLUTIONS.map((r) => (
                     <button
                       key={r}
-                      onClick={() => setCsvResolution(r)}
+                      onClick={() => handleCsvResolutionChange(r)}
                       className={`px-3 py-1 text-xs font-medium transition-colors border-r last:border-r-0 cursor-pointer ${
                         csvResolution === r
                           ? "bg-primary text-primary-foreground"
@@ -610,16 +637,14 @@ function dedupeTags(tags: TagOption[]): TagOption[] {
   return result;
 }
 
-function renderCell(row: RawRow | AggregateRow, col: string): string {
+function renderCell(row: RawRow | AggregateRow, col: ColumnKey): string {
   switch (col) {
     case "timestamp":
-      return new Date((row as RawRow).timestamp).toLocaleString();
+      return new Date(row.timestamp).toLocaleString();
     case "machine_name":
-      return (row as RawRow).machine_name;
-    case "machine_id":
-      return (row as RawRow).machine_id;
+      return row.machine_name;
     case "tag_name":
-      return (row as RawRow).tag_name;
+      return row.tag_name;
     case "value":
       return String((row as RawRow).value?.toFixed(4) ?? "");
     case "quality":
@@ -632,7 +657,5 @@ function renderCell(row: RawRow | AggregateRow, col: string): string {
       return (row as AggregateRow).avg_value?.toFixed(4) ?? "";
     case "sample_count":
       return String((row as AggregateRow).sample_count ?? "");
-    default:
-      return "";
   }
 }

@@ -6,9 +6,11 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"pharma-platform/internal/api"
 	"pharma-platform/internal/api/handlers"
+	"pharma-platform/internal/business"
 	"pharma-platform/internal/config"
 	"pharma-platform/internal/postgres"
 	"pharma-platform/internal/questdb"
@@ -55,6 +57,7 @@ func main() {
 	reader := questdb.NewReader(questClient)
 	machineStore := store.NewMachineStore(postgresClient)
 	tagStore := store.NewTagStore(postgresClient)
+	productionStore := store.NewProductionStore(postgresClient)
 	alarmStore := handlers.NewAlarmStore()
 	dummyCollector := &dummyCollector{}
 
@@ -66,16 +69,45 @@ func main() {
 	collectorHandler := handlers.NewCollectorHandler(dummyCollector)
 	alarmHandler := handlers.NewAlarmHandler(alarmStore)
 	systemHandler := handlers.NewSystemHandler(machineStore, alarmStore, dummyCollector)
+	dashboardHandler := handlers.NewDashboardHandler(productionStore, alarmStore)
+	oeeHandler := handlers.NewOEEHandler(productionStore)
+	productionHandler := handlers.NewProductionHandler(productionStore)
+	controlHandler := handlers.NewControlHandler()
+
+	bizEngine := business.NewEngine(business.SimulatorConfig{
+		MachineCount:    len(machineStore.GetPLCs()),
+		AlarmStore:      alarmStore,
+		CollectorPaused: dummyCollector.IsPaused,
+	})
+	go func() {
+		tick := time.NewTicker(5 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				bizEngine.Tick()
+			}
+		}
+	}()
+
+	bizAnalyticsHandler := handlers.NewBusinessAnalyticsHandler(bizEngine)
 
 	server := api.NewFull(cfg.API, &api.Handlers{
-		Telemetry: telemetryHandler,
-		PLC:       plcHandler,
-		Tag:       tagHandler,
-		Machine:   machineHandler,
-		Analytics: analyticsHandler,
-		Collector: collectorHandler,
-		Alarms:    alarmHandler,
-		System:    systemHandler,
+		Telemetry:    telemetryHandler,
+		PLC:          plcHandler,
+		Tag:          tagHandler,
+		Machine:      machineHandler,
+		Analytics:    analyticsHandler,
+		BizAnalytics: bizAnalyticsHandler,
+		Collector:    collectorHandler,
+		Alarms:       alarmHandler,
+		System:       systemHandler,
+		Dashboard:    dashboardHandler,
+		OEE:          oeeHandler,
+		Production:   productionHandler,
+		Controls:     controlHandler,
 	})
 
 	go func() {

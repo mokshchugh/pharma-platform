@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,12 +11,14 @@ import (
 
 	"pharma-platform/internal/api"
 	"pharma-platform/internal/api/handlers"
+	"pharma-platform/internal/business"
 	"pharma-platform/internal/collector"
 	"pharma-platform/internal/config"
 	"pharma-platform/internal/models"
 	"pharma-platform/internal/plc"
 	"pharma-platform/internal/postgres"
 	"pharma-platform/internal/questdb"
+	"pharma-platform/internal/simulation"
 	"pharma-platform/internal/store"
 )
 
@@ -39,7 +40,7 @@ func (m *mockDriver) Read(ctx context.Context, tag models.Tag) (models.Sample, e
 	case models.DataTypeFloat32, models.DataTypeFloat64:
 		base = 42.0
 	}
-	val := base + m.offset + math.Sin(float64(time.Now().UnixMilli())/1000.0)*10.0
+	val := base + m.offset // simple offset, real data comes from simulation
 	return models.Sample{
 		Timestamp:   time.Now(),
 		MachineID:   fmt.Sprintf("%d", tag.MachineID),
@@ -89,6 +90,8 @@ func main() {
 
 	machineStore := store.NewMachineStore(postgresClient)
 	tagStore := store.NewTagStore(postgresClient)
+	productionStore := store.NewProductionStore(postgresClient)
+	alarmStore := handlers.NewAlarmStore()
 
 	plcs := machineStore.GetPLCs()
 	tags := tagStore.GetTags()
@@ -121,8 +124,21 @@ func main() {
 		}
 	}()
 
+	sim := simulation.New(samples)
+	go func() {
+		tick := time.NewTicker(100 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				sim.Tick()
+			}
+		}
+	}()
+
 	reader := questdb.NewReader(questClient)
-	alarmStore := handlers.NewAlarmStore()
 
 	telemetryHandler := handlers.NewTelemetryHandler(reader)
 	plcHandler := handlers.NewPLCHandler(machineStore)
@@ -133,16 +149,45 @@ func main() {
 	collectorHandler := handlers.NewCollectorHandler(collectorAdapter)
 	alarmHandler := handlers.NewAlarmHandler(alarmStore)
 	systemHandler := handlers.NewSystemHandler(machineStore, alarmStore, collectorService)
+	dashboardHandler := handlers.NewDashboardHandler(productionStore, alarmStore)
+	oeeHandler := handlers.NewOEEHandler(productionStore)
+	productionHandler := handlers.NewProductionHandler(productionStore)
+	controlHandler := handlers.NewControlHandler()
+
+	bizEngine := business.NewEngine(business.SimulatorConfig{
+		MachineCount:    len(plcs),
+		AlarmStore:      alarmStore,
+		CollectorPaused: collectorService.IsPaused,
+	})
+	go func() {
+		tick := time.NewTicker(5 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				bizEngine.Tick()
+			}
+		}
+	}()
+
+	bizAnalyticsHandler := handlers.NewBusinessAnalyticsHandler(bizEngine)
 
 	server := api.NewBackend(cfg.API, &api.Handlers{
-		Telemetry: telemetryHandler,
-		PLC:       plcHandler,
-		Tag:       tagHandler,
-		Machine:   machineHandler,
-		Analytics: analyticsHandler,
-		Collector: collectorHandler,
-		Alarms:    alarmHandler,
-		System:    systemHandler,
+		Telemetry:    telemetryHandler,
+		PLC:          plcHandler,
+		Tag:          tagHandler,
+		Machine:      machineHandler,
+		Analytics:    analyticsHandler,
+		BizAnalytics: bizAnalyticsHandler,
+		Collector:    collectorHandler,
+		Alarms:       alarmHandler,
+		System:       systemHandler,
+		Dashboard:    dashboardHandler,
+		OEE:          oeeHandler,
+		Production:   productionHandler,
+		Controls:     controlHandler,
 	})
 
 	go func() {

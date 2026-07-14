@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "./ui/button";
 import MachineSummaryCard from "./MachineSummaryCard";
 import ResolutionSelector from "./ResolutionSelector";
 import TimeWindowSelector from "./TimeWindowSelector";
@@ -80,25 +81,59 @@ export default function MachineDetailPage({
   const [customFrom, setCustomFrom] = useState<string>();
   const [customTo, setCustomTo] = useState<string>();
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const intervalRef = useRef<ReturnType<typeof setInterval>>();
+  const intervalRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   useEffect(() => {
-    fetch(`/api/v1/machines/${machineId}`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`GET /api/v1/machines/${machineId} ${r.status}`);
-        return r.json();
-      })
-      .then(setMachine)
-      .catch((e) => setError(e.message));
+    let cancelled = false;
 
-    fetch(`/api/v1/machines/${machineId}/telemetry`)
-      .then((r) => {
+    Promise.all([
+      fetch(`/api/v1/machines/${machineId}`).then((r) => {
+        if (!r.ok) throw new Error(`GET /api/v1/machines/${machineId} ${r.status}`);
+        return r.json() as Promise<Machine>;
+      }),
+      fetch(`/api/v1/machines/${machineId}/telemetry`).then((r) => {
         if (!r.ok) throw new Error(`GET /api/v1/machines/${machineId}/telemetry ${r.status}`);
-        return r.json();
+        return r.json() as Promise<TelemetryTag[]>;
+      }),
+    ])
+      .then(([m, t]) => {
+        if (!cancelled) {
+          setMachine(m);
+          setTags(t);
+        }
       })
-      .then(setTags)
-      .catch((e) => setError(e.message));
+      .catch((e) => {
+        if (!cancelled) setError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setInitialLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [machineId]);
+
+  const retryInitial = useCallback(() => {
+    setInitialLoading(true);
+    setError("");
+
+    Promise.all([
+      fetch(`/api/v1/machines/${machineId}`).then((r) => {
+        if (!r.ok) throw new Error(`GET /api/v1/machines/${machineId} ${r.status}`);
+        return r.json() as Promise<Machine>;
+      }),
+      fetch(`/api/v1/machines/${machineId}/telemetry`).then((r) => {
+        if (!r.ok) throw new Error(`GET /api/v1/machines/${machineId}/telemetry ${r.status}`);
+        return r.json() as Promise<TelemetryTag[]>;
+      }),
+    ])
+      .then(([m, t]) => {
+        setMachine(m);
+        setTags(t);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setInitialLoading(false));
   }, [machineId]);
 
   const fetchAnalytics = useCallback(() => {
@@ -111,7 +146,7 @@ export default function MachineDetailPage({
     fetch(`/api/v1/machines/${machineId}/analytics?${params}`)
       .then((r) => {
         if (!r.ok) throw new Error(`GET /api/v1/machines/${machineId}/analytics ${r.status}`);
-        return r.json();
+        return r.json() as Promise<AnalyticsResponse>;
       })
       .then(setAnalytics)
       .catch((e) => setError(e.message))
@@ -137,59 +172,120 @@ export default function MachineDetailPage({
     }
   }
 
+  if (initialLoading) {
+    return (
+      <main className="flex-1 h-full overflow-auto p-2">
+        <div className="animate-pulse space-y-2">
+          <div className="h-3 w-20 bg-muted rounded" />
+          <div className="h-4 w-40 bg-muted rounded" />
+          <div className="h-36 bg-muted rounded" />
+          <div className="flex gap-2">
+            <div className="h-6 w-36 bg-muted rounded" />
+            <div className="h-6 w-52 bg-muted rounded" />
+          </div>
+          <div className="h-28 bg-muted rounded" />
+          <div className="h-28 bg-muted rounded" />
+        </div>
+      </main>
+    );
+  }
+
+  if (error && !machine) {
+    return (
+      <main className="flex-1 h-full overflow-auto p-2">
+        <button
+          onClick={onBack}
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors mb-1 cursor-pointer border-none bg-transparent"
+        >
+          &larr; Back to Machines
+        </button>
+        <div className="flex flex-col items-center justify-center py-10 gap-2">
+          <p className="text-sm text-destructive">{error}</p>
+          <Button variant="outline" size="sm" onClick={retryInitial}>Retry</Button>
+        </div>
+      </main>
+    );
+  }
+
+  if (!machine && !error) {
+    return (
+      <main className="flex-1 h-full overflow-auto p-2">
+        <button
+          onClick={onBack}
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors mb-1 cursor-pointer border-none bg-transparent"
+        >
+          &larr; Back to Machines
+        </button>
+        <p className="text-xs text-muted-foreground">Machine not found.</p>
+      </main>
+    );
+  }
+
+  const m = machine!;
   return (
-    <main className="flex-1 h-full overflow-auto p-4">
+    <main className="flex-1 h-full overflow-auto p-2">
       <button
         onClick={onBack}
-        className="text-xs text-muted-foreground hover:text-foreground transition-colors mb-3 cursor-pointer border-none bg-transparent"
+        className="text-xs text-muted-foreground hover:text-foreground transition-colors mb-0.5 cursor-pointer border-none bg-transparent"
       >
         &larr; Back to Machines
       </button>
 
-      {error && <p className="text-sm text-destructive mb-2">{error}</p>}
+      <h1 className="text-sm font-semibold mb-1">{m.machine_name}</h1>
 
-      <div className="space-y-4">
-        {machine && (
-          <div className="max-w-xl">
-            <h1 className="text-base font-semibold mb-3">{machine.machine_name}</h1>
-            <MachineSummaryCard machine={machine} />
-          </div>
-        )}
-
-        {tags.length > 0 && (
-          <>
-            <div className="flex items-center gap-4 flex-wrap">
-              <ResolutionSelector value={resolution} onChange={setResolution} />
-              <TimeWindowSelector value={timeWindow} onChange={handleTimeWindowChange} />
-              <button
-                type="button"
-                onClick={() => setAutoRefresh((v) => !v)}
-                className={`text-xs px-2 py-1 rounded border cursor-pointer ${
-                  autoRefresh
-                    ? "bg-green-100 border-green-300 text-green-700"
-                    : "bg-gray-100 border-gray-300 text-gray-500"
-                }`}
-              >
-                Auto-refresh: {autoRefresh ? "ON" : "OFF"}
-              </button>
-            </div>
-
-            {analytics && analytics.tags.length > 0 && (
-              <div className="space-y-6">
-                {analytics.tags.map((tag) => (
-                  <TelemetrySection key={tag.tag_id} tag={tag} />
-                ))}
-              </div>
-            )}
-
-            {analytics && analytics.tags.length === 0 && (
-              <p className="text-sm text-muted-foreground">No telemetry tags found for this machine.</p>
-            )}
-          </>
-        )}
-
-        {!machine && !error && <p className="text-sm text-muted-foreground">Loading machine...</p>}
+      <div className="max-w-xl mb-1">
+        <MachineSummaryCard machine={m} />
       </div>
+
+      {tags.length > 0 && (
+        <>
+          <div className="flex items-center gap-1.5 flex-wrap mb-1">
+            <ResolutionSelector value={resolution} onChange={setResolution} />
+            <TimeWindowSelector value={timeWindow} onChange={handleTimeWindowChange} />
+            <button
+              type="button"
+              onClick={() => setAutoRefresh((v) => !v)}
+              className={`text-[11px] px-1.5 py-0.5 rounded border cursor-pointer leading-tight ${
+                autoRefresh
+                  ? "bg-green-100 border-green-300 text-green-700"
+                  : "bg-gray-100 border-gray-300 text-gray-500"
+              }`}
+            >
+              Auto: {autoRefresh ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 mb-1">
+              <p className="text-[11px] text-destructive">{error}</p>
+              <Button variant="outline" size="sm" onClick={fetchAnalytics}>Retry</Button>
+            </div>
+          )}
+
+          {loading && !analytics && (
+            <div className="animate-pulse space-y-1">
+              <div className="h-24 bg-muted rounded" />
+              <div className="h-24 bg-muted rounded" />
+            </div>
+          )}
+
+          {analytics && analytics.tags.length > 0 && (
+            <div className="space-y-0.5">
+              {analytics.tags.map((tag) => (
+                <TelemetrySection key={tag.tag_id} tag={tag} />
+              ))}
+            </div>
+          )}
+
+          {analytics && analytics.tags.length === 0 && (
+            <p className="text-[11px] text-muted-foreground">No telemetry tags found for this machine.</p>
+          )}
+        </>
+      )}
+
+      {tags.length === 0 && !loading && (
+        <p className="text-[11px] text-muted-foreground">No telemetry tags configured for this machine.</p>
+      )}
     </main>
   );
 }
