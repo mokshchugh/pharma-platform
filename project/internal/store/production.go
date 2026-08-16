@@ -405,6 +405,276 @@ func (s *ProductionStore) CalculateOEE(machineID int, window time.Duration) *mod
 	}
 }
 
+func (s *ProductionStore) ProductionByHour() map[string]float64 {
+	db := s.client.DB()
+	if db == nil {
+		return nil
+	}
+
+	rows, err := db.Query(
+		`SELECT EXTRACT(HOUR FROM start_time)::int AS hr, COALESCE(SUM(good_qty + bad_qty), 0)
+		 FROM production_runs
+		 GROUP BY hr
+		 ORDER BY hr`,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	result := make(map[string]float64)
+	for rows.Next() {
+		var hr int
+		var total float64
+		if err := rows.Scan(&hr, &total); err != nil {
+			continue
+		}
+		result[fmt.Sprintf("%02d:00", hr)] = total
+	}
+
+	return result
+}
+
+func (s *ProductionStore) ProductionByDay() map[string]float64 {
+	db := s.client.DB()
+	if db == nil {
+		return nil
+	}
+
+	rows, err := db.Query(
+		`SELECT to_char(start_time, 'YYYY-MM-DD') AS day, COALESCE(SUM(good_qty + bad_qty), 0)
+		 FROM production_runs
+		 WHERE start_time >= now() - interval '30 days'
+		 GROUP BY day
+		 ORDER BY day`,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	result := make(map[string]float64)
+	for rows.Next() {
+		var day string
+		var total float64
+		if err := rows.Scan(&day, &total); err != nil {
+			continue
+		}
+		result[day] = total
+	}
+
+	return result
+}
+
+func (s *ProductionStore) ProductionByWeek() map[string]float64 {
+	db := s.client.DB()
+	if db == nil {
+		return nil
+	}
+
+	rows, err := db.Query(
+		`SELECT to_char(start_time, 'IYYY-"W"IW') AS wk, COALESCE(SUM(good_qty + bad_qty), 0)
+		 FROM production_runs
+		 WHERE start_time >= now() - interval '90 days'
+		 GROUP BY wk
+		 ORDER BY wk`,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	result := make(map[string]float64)
+	for rows.Next() {
+		var wk string
+		var total float64
+		if err := rows.Scan(&wk, &total); err != nil {
+			continue
+		}
+		result[wk] = total
+	}
+
+	return result
+}
+
+func (s *ProductionStore) ProductionByShift() map[string]float64 {
+	db := s.client.DB()
+	if db == nil {
+		return nil
+	}
+
+	rows, err := db.Query(
+		`SELECT CASE
+		     WHEN EXTRACT(HOUR FROM start_time) >= 6 AND EXTRACT(HOUR FROM start_time) < 14 THEN 'Shift A (06-14)'
+		     WHEN EXTRACT(HOUR FROM start_time) >= 14 AND EXTRACT(HOUR FROM start_time) < 22 THEN 'Shift B (14-22)'
+		     ELSE 'Shift C (22-06)'
+		 END AS shift, COALESCE(SUM(good_qty + bad_qty), 0)
+		 FROM production_runs
+		 GROUP BY shift`,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	result := make(map[string]float64)
+	for rows.Next() {
+		var shift string
+		var total float64
+		if err := rows.Scan(&shift, &total); err != nil {
+			continue
+		}
+		result[shift] = total
+	}
+
+	return result
+}
+
+func (s *ProductionStore) ProductionByMachine() map[string]float64 {
+	db := s.client.DB()
+	if db == nil {
+		return nil
+	}
+
+	rows, err := db.Query(
+		`SELECT COALESCE(m.machine_name, ''), COALESCE(SUM(pr.good_qty + pr.bad_qty), 0)
+		 FROM production_runs pr
+		 JOIN machines m ON m.id = pr.machine_id
+		 GROUP BY m.machine_name`,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	result := make(map[string]float64)
+	for rows.Next() {
+		var name string
+		var total float64
+		if err := rows.Scan(&name, &total); err != nil {
+			continue
+		}
+		result[name] = total
+	}
+
+	return result
+}
+
+func (s *ProductionStore) ProductionByBatch() map[string]float64 {
+	db := s.client.DB()
+	if db == nil {
+		return nil
+	}
+
+	rows, err := db.Query(
+		`SELECT batch_id, COALESCE(SUM(good_qty + bad_qty), 0)
+		 FROM production_runs
+		 WHERE batch_id <> ''
+		 GROUP BY batch_id
+		 ORDER BY MAX(start_time) DESC
+		 LIMIT 10`,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	result := make(map[string]float64)
+	for rows.Next() {
+		var batch string
+		var total float64
+		if err := rows.Scan(&batch, &total); err != nil {
+			continue
+		}
+		result[batch] = total
+	}
+
+	return result
+}
+
+func (s *ProductionStore) QualityTotals() (good float64, bad float64) {
+	db := s.client.DB()
+	if db == nil {
+		return 0, 0
+	}
+
+	db.QueryRow(
+		`SELECT COALESCE(SUM(good_qty), 0), COALESCE(SUM(bad_qty), 0) FROM production_runs`,
+	).Scan(&good, &bad)
+
+	return good, bad
+}
+
+func (s *ProductionStore) QualityByMachine() map[string]float64 {
+	db := s.client.DB()
+	if db == nil {
+		return nil
+	}
+
+	rows, err := db.Query(
+		`SELECT COALESCE(m.machine_name, ''),
+		        CASE WHEN SUM(pr.good_qty + pr.bad_qty) > 0
+		             THEN 100.0 * SUM(pr.bad_qty) / SUM(pr.good_qty + pr.bad_qty)
+		             ELSE 0 END
+		 FROM production_runs pr
+		 JOIN machines m ON m.id = pr.machine_id
+		 GROUP BY m.machine_name`,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	result := make(map[string]float64)
+	for rows.Next() {
+		var name string
+		var rejectPct float64
+		if err := rows.Scan(&name, &rejectPct); err != nil {
+			continue
+		}
+		result[name] = rejectPct
+	}
+
+	return result
+}
+
+func (s *ProductionStore) QualityTrendHourly(hours int) []models.QualityTrendPoint {
+	db := s.client.DB()
+	if db == nil {
+		return nil
+	}
+
+	rows, err := db.Query(
+		`SELECT date_trunc('hour', start_time) AS bucket,
+		        COALESCE(SUM(good_qty), 0), COALESCE(SUM(bad_qty), 0)
+		 FROM production_runs
+		 WHERE start_time >= now() - ($1 || ' hours')::interval
+		 GROUP BY bucket
+		 ORDER BY bucket`,
+		hours,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var points []models.QualityTrendPoint
+	for rows.Next() {
+		var bucket time.Time
+		var good, bad float64
+		if err := rows.Scan(&bucket, &good, &bad); err != nil {
+			continue
+		}
+		rejectPct := 0.0
+		if good+bad > 0 {
+			rejectPct = 100.0 * bad / (good + bad)
+		}
+		points = append(points, models.QualityTrendPoint{Timestamp: bucket, RejectPct: rejectPct})
+	}
+
+	return points
+}
+
 func (s *ProductionStore) GetDashboardSummary() *models.DashboardSummary {
 	db := s.client.DB()
 	if db == nil {

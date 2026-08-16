@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"pharma-platform/internal/api"
 	"pharma-platform/internal/api/handlers"
@@ -58,8 +57,17 @@ func main() {
 	machineStore := store.NewMachineStore(postgresClient)
 	tagStore := store.NewTagStore(postgresClient)
 	productionStore := store.NewProductionStore(postgresClient)
-	alarmStore := handlers.NewAlarmStore()
+	alarmAckStore := store.NewAlarmAckStore(postgresClient)
+	alarmStore := handlers.NewAlarmStore(reader, alarmAckStore)
+	controlStore := store.NewControlStore(postgresClient)
 	dummyCollector := &dummyCollector{}
+
+	allMachines, _ := machineStore.GetAllMachines()
+	machineIDs := make([]int, 0, len(allMachines))
+	for _, m := range allMachines {
+		machineIDs = append(machineIDs, m.ID)
+	}
+	controlStore.EnsureDefaults(machineIDs)
 
 	telemetryHandler := handlers.NewTelemetryHandler(reader)
 	plcHandler := handlers.NewPLCHandler(machineStore)
@@ -72,25 +80,16 @@ func main() {
 	dashboardHandler := handlers.NewDashboardHandler(productionStore, alarmStore)
 	oeeHandler := handlers.NewOEEHandler(productionStore)
 	productionHandler := handlers.NewProductionHandler(productionStore)
-	controlHandler := handlers.NewControlHandler()
+	controlHandler := handlers.NewControlHandler(controlStore)
 
-	bizEngine := business.NewEngine(business.SimulatorConfig{
-		MachineCount:    len(machineStore.GetPLCs()),
-		AlarmStore:      alarmStore,
+	bizEngine := business.NewEngine(business.RealEngineConfig{
+		ProductionStore: productionStore,
+		MachineStore:    machineStore,
+		TagStore:        tagStore,
+		Reader:          reader,
+		AlarmAckStore:   alarmAckStore,
 		CollectorPaused: dummyCollector.IsPaused,
 	})
-	go func() {
-		tick := time.NewTicker(5 * time.Second)
-		defer tick.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-tick.C:
-				bizEngine.Tick()
-			}
-		}
-	}()
 
 	bizAnalyticsHandler := handlers.NewBusinessAnalyticsHandler(bizEngine)
 
@@ -132,7 +131,7 @@ func main() {
 
 type dummyCollector struct{}
 
-func (d *dummyCollector) IsPaused() bool    { return false }
+func (d *dummyCollector) IsPaused() bool     { return false }
 func (d *dummyCollector) Pause()             {}
 func (d *dummyCollector) Resume()            {}
 func (d *dummyCollector) TickCount() int64   { return 0 }

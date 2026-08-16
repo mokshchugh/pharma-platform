@@ -110,6 +110,7 @@ type EnergyAnalytics struct {
 	EnergyPerPart   float64              `json:"energy_per_part"`
 	PeakDemand      float64              `json:"peak_demand"`
 	PerMachine      map[string]BusinessMetrics `json:"per_machine"`
+	Simulated       bool                 `json:"simulated"`
 }
 
 type AlarmAnalytics struct {

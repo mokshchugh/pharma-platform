@@ -1,10 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
-	"sync"
+	"strings"
 	"time"
+
+	"pharma-platform/internal/questdb"
+	"pharma-platform/internal/store"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -21,44 +25,74 @@ type Alarm struct {
 }
 
 type AlarmStore struct {
-	mu      sync.RWMutex
-	alarms  []Alarm
-	counter int
+	reader *questdb.Reader
+	acks   *store.AlarmAckStore
 }
 
-func NewAlarmStore() *AlarmStore {
-	return &AlarmStore{}
+func NewAlarmStore(reader *questdb.Reader, acks *store.AlarmAckStore) *AlarmStore {
+	return &AlarmStore{reader: reader, acks: acks}
+}
+
+func alarmKey(machineID, tagName string, ts time.Time) string {
+	return machineID + "|" + tagName + "|" + ts.UTC().Format(time.RFC3339Nano)
+}
+
+func (s *AlarmStore) all() []Alarm {
+	rows, err := s.reader.ListAlarms(context.Background(), 500)
+	if err != nil {
+		return nil
+	}
+
+	ackedSet := s.acks.AckedSet()
+
+	alarms := make([]Alarm, 0, len(rows))
+	for _, row := range rows {
+		key := alarmKey(row.MachineID, row.TagName, row.Timestamp)
+
+		alarm := Alarm{
+			ID:        key,
+			PLCID:     row.MachineID,
+			TagID:     row.TagName,
+			Message:   row.Message,
+			Severity:  row.Severity,
+			Active:    true,
+			CreatedAt: row.Timestamp,
+		}
+
+		if ackedAt, ok := ackedSet[key]; ok {
+			alarm.Active = false
+			at := ackedAt
+			alarm.AckAt = &at
+		}
+
+		alarms = append(alarms, alarm)
+	}
+
+	return alarms
 }
 
 func (s *AlarmStore) List() []Alarm {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	result := make([]Alarm, len(s.alarms))
-	copy(result, s.alarms)
-	return result
+	return s.all()
 }
 
 func (s *AlarmStore) ListActive() []Alarm {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var result []Alarm
-	for _, a := range s.alarms {
+	var active []Alarm
+	for _, a := range s.all() {
 		if a.Active {
-			result = append(result, a)
+			active = append(active, a)
 		}
 	}
-	return result
+	return active
 }
 
 func (s *AlarmStore) ActiveCount() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	return len(s.ListActive())
+}
 
+func (s *AlarmStore) CriticalCount() int {
 	count := 0
-	for _, a := range s.alarms {
-		if a.Active {
+	for _, a := range s.ListActive() {
+		if a.Severity == "critical" {
 			count++
 		}
 	}
@@ -66,29 +100,17 @@ func (s *AlarmStore) ActiveCount() int {
 }
 
 func (s *AlarmStore) Acknowledge(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := time.Now()
-	for i := range s.alarms {
-		if s.alarms[i].ID == id {
-			s.alarms[i].Active = false
-			s.alarms[i].AckAt = &now
-			return
-		}
+	parts := strings.SplitN(id, "|", 3)
+	if len(parts) != 3 {
+		return
 	}
-}
 
-func (s *AlarmStore) CriticalCount() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	count := 0
-	for _, a := range s.alarms {
-		if a.Active && a.Severity == "critical" {
-			count++
-		}
+	ts, err := time.Parse(time.RFC3339Nano, parts[2])
+	if err != nil {
+		return
 	}
-	return count
+
+	s.acks.Ack(parts[0], parts[1], ts)
 }
 
 type AlarmHandler struct {

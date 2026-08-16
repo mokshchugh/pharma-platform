@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"pharma-platform/internal/models"
@@ -643,6 +644,119 @@ ORDER BY timestamp ASC`,
 			MaxValue:    row[5].(float64),
 			AvgValue:    row[6].(float64),
 			SampleCount: int64(row[7].(float64)),
+		})
+	}
+
+	return rows, nil
+}
+
+type AlarmRow struct {
+	Timestamp time.Time
+	MachineID string
+	TagName   string
+	Severity  string
+	Message   string
+}
+
+func (r *Reader) ListAlarms(ctx context.Context, limit int) ([]AlarmRow, error) {
+	query := fmt.Sprintf(
+		`SELECT timestamp, machine_id, tag_name, severity, message
+		 FROM alarms
+		 ORDER BY timestamp DESC
+		 LIMIT %d`,
+		limit,
+	)
+
+	result, err := r.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([]AlarmRow, 0, len(result.Dataset))
+	for _, row := range result.Dataset {
+		if len(row) != 5 {
+			continue
+		}
+		ts, err := time.Parse(time.RFC3339Nano, row[0].(string))
+		if err != nil {
+			continue
+		}
+		rows = append(rows, AlarmRow{
+			Timestamp: ts,
+			MachineID: fmt.Sprintf("%v", row[1]),
+			TagName:   fmt.Sprintf("%v", row[2]),
+			Severity:  fmt.Sprintf("%v", row[3]),
+			Message:   fmt.Sprintf("%v", row[4]),
+		})
+	}
+
+	return rows, nil
+}
+
+func (r *Reader) InsertAlarm(ctx context.Context, machineID, tagName, severity, message string) error {
+	escape := func(s string) string {
+		return strings.ReplaceAll(s, "'", "''")
+	}
+
+	query := fmt.Sprintf(
+		`INSERT INTO alarms (timestamp, machine_id, tag_name, severity, message, acknowledged)
+		 VALUES (now(), '%s', '%s', '%s', '%s', false)`,
+		escape(machineID), escape(tagName), escape(severity), escape(message),
+	)
+
+	_, err := r.Query(ctx, query)
+	return err
+}
+
+func (r *Reader) InsertMachineState(ctx context.Context, machineID, state string, speed, setpoint, loadPercent float64) error {
+	escape := func(s string) string {
+		return strings.ReplaceAll(s, "'", "''")
+	}
+
+	query := fmt.Sprintf(
+		`INSERT INTO machine_state (timestamp, machine_id, state, speed, setpoint, load_percent)
+		 VALUES (now(), '%s', '%s', %f, %f, %f)`,
+		escape(machineID), escape(state), speed, setpoint, loadPercent,
+	)
+
+	_, err := r.Query(ctx, query)
+	return err
+}
+
+type MachineStateRow struct {
+	Timestamp time.Time
+	MachineID string
+	State     string
+}
+
+func (r *Reader) MachineStateHistory(ctx context.Context, machineID string, since time.Time) ([]MachineStateRow, error) {
+	query := fmt.Sprintf(
+		`SELECT timestamp, machine_id, state
+		 FROM machine_state
+		 WHERE machine_id = '%s' AND timestamp >= '%s'
+		 ORDER BY timestamp ASC`,
+		machineID,
+		since.UTC().Format(time.RFC3339Nano),
+	)
+
+	result, err := r.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([]MachineStateRow, 0, len(result.Dataset))
+	for _, row := range result.Dataset {
+		if len(row) != 3 {
+			continue
+		}
+		ts, err := time.Parse(time.RFC3339Nano, row[0].(string))
+		if err != nil {
+			continue
+		}
+		rows = append(rows, MachineStateRow{
+			Timestamp: ts,
+			MachineID: fmt.Sprintf("%v", row[1]),
+			State:     fmt.Sprintf("%v", row[2]),
 		})
 	}
 

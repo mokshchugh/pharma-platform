@@ -3,18 +3,18 @@ package models
 import "time"
 
 type ProductionRun struct {
-	ID           int        `json:"id"`
-	MachineID    int        `json:"machine_id"`
-	MachineName  string     `json:"machine_name"`
-	BatchID      string     `json:"batch_id"`
-	ProductName  string     `json:"product_name"`
-	TargetQty    int        `json:"target_qty"`
-	GoodQty      int        `json:"good_qty"`
-	BadQty       int        `json:"bad_qty"`
-	StartTime    time.Time  `json:"start_time"`
-	EndTime      *time.Time `json:"end_time,omitempty"`
-	Status       string     `json:"status"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID          int        `json:"id"`
+	MachineID   int        `json:"machine_id"`
+	MachineName string     `json:"machine_name"`
+	BatchID     string     `json:"batch_id"`
+	ProductName string     `json:"product_name"`
+	TargetQty   int        `json:"target_qty"`
+	GoodQty     int        `json:"good_qty"`
+	BadQty      int        `json:"bad_qty"`
+	StartTime   time.Time  `json:"start_time"`
+	EndTime     *time.Time `json:"end_time,omitempty"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 type DowntimeEvent struct {
@@ -59,8 +59,8 @@ type OEEResponse struct {
 }
 
 type ControlAction struct {
-	Action  string  `json:"action"`
-	Value   float64 `json:"value,omitempty"`
+	Action string  `json:"action"`
+	Value  float64 `json:"value,omitempty"`
 }
 
 type MachineControlState struct {
@@ -82,6 +82,11 @@ type DashboardSummary struct {
 	TodayGoodParts  int            `json:"today_good_parts"`
 	TodayBadParts   int            `json:"today_bad_parts"`
 	MachineStates   []MachineBrief `json:"machine_states"`
+}
+
+type QualityTrendPoint struct {
+	Timestamp time.Time `json:"timestamp"`
+	RejectPct float64   `json:"reject_pct"`
 }
 
 type MachineBrief struct {

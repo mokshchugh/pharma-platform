@@ -134,6 +134,7 @@ interface EnergyAnalytics {
   energy_per_part: number;
   peak_demand: number;
   per_machine: Record<string, BusinessMetrics>;
+  simulated: boolean;
 }
 
 interface AlarmAnalytics {
@@ -759,16 +760,16 @@ export default function AnalyticsPage() {
       <div>
         <SectionTitle title="Energy Analytics" count={6} />
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
-          <KpiCard label="Avg Power" value={energy.data ? `${energy.data.avg_power.toFixed(1)}` : "—"} unit="kW" simulated={sim} />
-          <KpiCard label="Max Power" value={energy.data ? `${energy.data.max_power.toFixed(1)}` : "—"} unit="kW" simulated={sim} />
-          <KpiCard label="Current" value={energy.data ? `${energy.data.current.toFixed(1)}` : "—"} unit="A" simulated={sim} />
-          <KpiCard label="Voltage" value={energy.data ? `${energy.data.voltage.toFixed(0)}` : "—"} unit="V" simulated={sim} />
-          <KpiCard label="Energy/Part" value={energy.data ? `${energy.data.energy_per_part.toFixed(3)}` : "—"} unit="kWh" simulated={sim} />
-          <KpiCard label="Peak Demand" value={energy.data ? `${energy.data.peak_demand.toFixed(1)}` : "—"} unit="kW" simulated={sim} />
+          <KpiCard label="Avg Power" value={energy.data ? `${energy.data.avg_power.toFixed(1)}` : "—"} unit="kW" simulated={energy.data?.simulated} />
+          <KpiCard label="Max Power" value={energy.data ? `${energy.data.max_power.toFixed(1)}` : "—"} unit="kW" simulated={energy.data?.simulated} />
+          <KpiCard label="Current" value={energy.data ? `${energy.data.current.toFixed(1)}` : "—"} unit="A" simulated={energy.data?.simulated} />
+          <KpiCard label="Voltage" value={energy.data ? `${energy.data.voltage.toFixed(0)}` : "—"} unit="V" simulated={energy.data?.simulated} />
+          <KpiCard label="Energy/Part" value={energy.data ? `${energy.data.energy_per_part.toFixed(3)}` : "—"} unit="kWh" simulated={energy.data?.simulated} />
+          <KpiCard label="Peak Demand" value={energy.data ? `${energy.data.peak_demand.toFixed(1)}` : "—"} unit="kW" simulated={energy.data?.simulated} />
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
-          <ChartCard title="Power Trend (24h)" option={powerTrendOption} simulated={sim} empty={!powerTrendOption} />
-          <ChartCard title="Energy Consumption (24h)" option={energyTrendOption} simulated={sim} empty={!energyTrendOption} />
+          <ChartCard title="Power Trend (24h)" option={powerTrendOption} simulated={energy.data?.simulated} empty={!powerTrendOption} />
+          <ChartCard title="Energy Consumption (24h)" option={energyTrendOption} simulated={energy.data?.simulated} empty={!energyTrendOption} />
         </div>
       </div>
 

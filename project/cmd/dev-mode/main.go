@@ -91,7 +91,8 @@ func main() {
 	machineStore := store.NewMachineStore(postgresClient)
 	tagStore := store.NewTagStore(postgresClient)
 	productionStore := store.NewProductionStore(postgresClient)
-	alarmStore := handlers.NewAlarmStore()
+	alarmAckStore := store.NewAlarmAckStore(postgresClient)
+	controlStore := store.NewControlStore(postgresClient)
 
 	plcs := machineStore.GetPLCs()
 	tags := tagStore.GetTags()
@@ -102,7 +103,18 @@ func main() {
 		log.Fatal("no tags found in database — run seed first (go run cmd/seed/main.go)")
 	}
 
-	samples := make(chan models.Sample, 100000)
+	allMachines, _ := machineStore.GetAllMachines()
+	machineIDs := make([]int, 0, len(allMachines))
+	for _, m := range allMachines {
+		machineIDs = append(machineIDs, m.ID)
+	}
+	controlStore.EnsureDefaults(machineIDs)
+
+	reader := questdb.NewReader(questClient)
+	alarmStore := handlers.NewAlarmStore(reader, alarmAckStore)
+
+	rawSamples := make(chan models.Sample, 100000)
+	writerSamples := make(chan models.Sample, 100000)
 
 	collectorCfg := config.CollectorConfig{
 		Workers:   16,
@@ -110,9 +122,9 @@ func main() {
 	}
 
 	driver := &mockDriver{}
-	collectorService := collector.New(driver, collectorCfg, tags, samples)
+	collectorService := collector.New(driver, collectorCfg, tags, rawSamples)
 
-	writer := questdb.NewWriter(questClient, "plc_samples", samples)
+	writer := questdb.NewWriter(questClient, "plc_samples", writerSamples)
 
 	if err := collectorService.Start(ctx); err != nil {
 		log.Fatal(err)
@@ -124,7 +136,56 @@ func main() {
 		}
 	}()
 
-	sim := simulation.New(samples)
+	// Tee raw samples to the writer while evaluating alarm/run-state
+	// transitions on the way through, since nothing else in the pipeline
+	// evaluates tag thresholds. This is what populates the QuestDB `alarms`
+	// and `machine_state` tables that the real alarm store and MTBF/MTTR
+	// analysis read from.
+	go func() {
+		lastAlarmActive := make(map[string]bool)
+		lastRunning := make(map[string]bool)
+
+		for s := range rawSamples {
+			switch s.TagName {
+			case "Alarm_Status", "AlarmStatus":
+				active := s.Value == 1
+				if active && !lastAlarmActive[s.MachineID] {
+					severity := "warning"
+					if fault, ok := lastRunning[s.MachineID]; ok && !fault {
+						severity = "critical"
+					}
+					msg := fmt.Sprintf("%s alarm active on machine %s", s.TagName, s.MachineID)
+					if err := reader.InsertAlarm(ctx, s.MachineID, s.TagName, severity, msg); err != nil {
+						log.Printf("insert alarm: %v", err)
+					}
+				}
+				lastAlarmActive[s.MachineID] = active
+
+			case "Run_Status", "RunStatus":
+				running := s.Value == 1
+				if prev, ok := lastRunning[s.MachineID]; !ok || prev != running {
+					state := "stopped"
+					if running {
+						state = "running"
+					}
+					if err := reader.InsertMachineState(ctx, s.MachineID, state, 0, 0, 0); err != nil {
+						log.Printf("insert machine_state: %v", err)
+					}
+				}
+				lastRunning[s.MachineID] = running
+			}
+
+			select {
+			case writerSamples <- s:
+			case <-ctx.Done():
+				close(writerSamples)
+				return
+			}
+		}
+		close(writerSamples)
+	}()
+
+	sim := simulation.New(rawSamples)
 	go func() {
 		tick := time.NewTicker(100 * time.Millisecond)
 		defer tick.Stop()
@@ -138,8 +199,6 @@ func main() {
 		}
 	}()
 
-	reader := questdb.NewReader(questClient)
-
 	telemetryHandler := handlers.NewTelemetryHandler(reader)
 	plcHandler := handlers.NewPLCHandler(machineStore)
 	tagHandler := handlers.NewTagHandler(tagStore)
@@ -152,25 +211,16 @@ func main() {
 	dashboardHandler := handlers.NewDashboardHandler(productionStore, alarmStore)
 	oeeHandler := handlers.NewOEEHandler(productionStore)
 	productionHandler := handlers.NewProductionHandler(productionStore)
-	controlHandler := handlers.NewControlHandler()
+	controlHandler := handlers.NewControlHandler(controlStore)
 
-	bizEngine := business.NewEngine(business.SimulatorConfig{
-		MachineCount:    len(plcs),
-		AlarmStore:      alarmStore,
+	bizEngine := business.NewEngine(business.RealEngineConfig{
+		ProductionStore: productionStore,
+		MachineStore:    machineStore,
+		TagStore:        tagStore,
+		Reader:          reader,
+		AlarmAckStore:   alarmAckStore,
 		CollectorPaused: collectorService.IsPaused,
 	})
-	go func() {
-		tick := time.NewTicker(5 * time.Second)
-		defer tick.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-tick.C:
-				bizEngine.Tick()
-			}
-		}
-	}()
 
 	bizAnalyticsHandler := handlers.NewBusinessAnalyticsHandler(bizEngine)
 
@@ -215,7 +265,7 @@ func main() {
 		default:
 			log.Println("shutting down...")
 			collectorService.Stop()
-			close(samples)
+			close(rawSamples)
 			writer.Stop()
 			cancel()
 			_ = server.Stop(context.Background())

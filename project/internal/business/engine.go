@@ -1,5 +1,10 @@
 package business
 
+import (
+	"pharma-platform/internal/questdb"
+	"pharma-platform/internal/store"
+)
+
 type Engine interface {
 	GetOverview() *ExecutiveOverview
 	GetProductionAnalytics() *ProductionAnalytics
@@ -10,9 +15,17 @@ type Engine interface {
 	GetCorrelationAnalysis() *CorrelationAnalysis
 	GetMaintenanceAnalysis() *MaintenanceAnalysis
 	GetInsights() *InsightsAnalysis
-	Tick()
 }
 
-func NewEngine(cfg SimulatorConfig) Engine {
-	return NewBusinessSimulator(cfg)
+type RealEngineConfig struct {
+	ProductionStore *store.ProductionStore
+	MachineStore    *store.MachineStore
+	TagStore        *store.TagStore
+	Reader          *questdb.Reader
+	AlarmAckStore   *store.AlarmAckStore
+	CollectorPaused func() bool
+}
+
+func NewEngine(cfg RealEngineConfig) Engine {
+	return NewRealEngine(cfg)
 }

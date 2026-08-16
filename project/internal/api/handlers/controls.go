@@ -4,41 +4,23 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"sync"
 
-	"pharma-platform/internal/models"
+	"pharma-platform/internal/store"
 
 	"github.com/go-chi/chi/v5"
 )
 
 type ControlHandler struct {
-	mu       sync.RWMutex
-	machines map[int]*models.MachineControlState
+	store *store.ControlStore
 }
 
-func NewControlHandler() *ControlHandler {
-	states := make(map[int]*models.MachineControlState)
-	for i := 1; i <= 11; i++ {
-		states[i] = &models.MachineControlState{
-			MachineID:   i,
-			Running:     false,
-			Speed:       0,
-			Setpoint:    100,
-			Mode:        "auto",
-			Temperature: 25,
-		}
-	}
-	return &ControlHandler{machines: states}
+func NewControlHandler(controlStore *store.ControlStore) *ControlHandler {
+	return &ControlHandler{store: controlStore}
 }
 
 // GET /api/v1/controls - list all machine control states
 func (h *ControlHandler) List(w http.ResponseWriter, r *http.Request) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	resp := make([]*models.MachineControlState, 0, len(h.machines))
-	for _, s := range h.machines {
-		resp = append(resp, s)
-	}
+	resp := h.store.List()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
@@ -51,10 +33,8 @@ func (h *ControlHandler) Get(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	h.mu.RLock()
-	state, ok := h.machines[id]
-	h.mu.RUnlock()
-	if !ok {
+	state := h.store.Get(id)
+	if state == nil {
 		http.Error(w, "machine not found", http.StatusNotFound)
 		return
 	}
@@ -66,12 +46,7 @@ func (h *ControlHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *ControlHandler) Start(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, _ := strconv.Atoi(idStr)
-	h.mu.Lock()
-	if s, ok := h.machines[id]; ok {
-		s.Running = true
-		s.Speed = s.Setpoint
-	}
-	h.mu.Unlock()
+	h.store.Start(id)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "started"})
 }
@@ -80,12 +55,7 @@ func (h *ControlHandler) Start(w http.ResponseWriter, r *http.Request) {
 func (h *ControlHandler) Stop(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, _ := strconv.Atoi(idStr)
-	h.mu.Lock()
-	if s, ok := h.machines[id]; ok {
-		s.Running = false
-		s.Speed = 0
-	}
-	h.mu.Unlock()
+	h.store.Stop(id)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
 }
@@ -101,14 +71,7 @@ func (h *ControlHandler) Setpoint(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	h.mu.Lock()
-	if s, ok := h.machines[id]; ok {
-		s.Setpoint = req.Value
-		if s.Running {
-			s.Speed = req.Value
-		}
-	}
-	h.mu.Unlock()
+	h.store.SetSetpoint(id, req.Value)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "setpoint_updated"})
 }
@@ -124,11 +87,7 @@ func (h *ControlHandler) SetMode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	h.mu.Lock()
-	if s, ok := h.machines[id]; ok {
-		s.Mode = req.Mode
-	}
-	h.mu.Unlock()
+	h.store.SetMode(id, req.Mode)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "mode_updated"})
 }
