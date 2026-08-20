@@ -21,7 +21,10 @@ down:
 logs:
 	docker compose -f project/runtime/docker-compose.yml logs -f
 
-dev:
+# Simulation mode: full dashboard + a built-in simulation engine that
+# generates realistic telemetry for all seeded machines (no real PLCs
+# needed). Use this to see OEE/production/analytics working end-to-end.
+simulate:
 	$(PORT_CHECK)
 	cd project && go build -o dev-mode cmd/dev-mode/main.go
 	cd project && { ./dev-mode & DEV_PID=$$!; }; \
@@ -31,11 +34,23 @@ dev:
 		wait $$DEV_PID 2>/dev/null; \
 		exit $$STATUS
 
-api:
+# Real mode: full dashboard + backend with no pre-configured machines or
+# simulated data. Machines are added and wired to drivers from the
+# dashboard itself.
+real:
 	$(PORT_CHECK)
-	cd project && go build -o api cmd/api/main.go && exec ./api
+	cd project && go build -o pharma-platform cmd/pharma-platform/main.go
+	cd project && { ./pharma-platform & API_PID=$$!; }; \
+		cd ../web && npm run dev; \
+		STATUS=$$?; \
+		kill $$API_PID 2>/dev/null; \
+		wait $$API_PID 2>/dev/null; \
+		exit $$STATUS
 
-sim:
+# Standalone fake-telemetry writer with no API/dashboard attached —
+# a lower-level utility for exercising the collector/writer pipeline
+# in isolation, not one of the two primary run modes above.
+collector-sim:
 	cd project && go build -o collector-sim cmd/collector-sim/collector-sim.go && exec ./collector-sim
 
 migrate:
@@ -47,8 +62,4 @@ seed:
 build:
 	cd project && go build ./...
 
-prod:
-	$(PORT_CHECK)
-	cd project && go build -o pharma-platform cmd/pharma-platform/main.go && exec ./pharma-platform
-
-.PHONY: setup up up-all down logs dev api sim migrate seed build prod
+.PHONY: setup up up-all down logs simulate real collector-sim migrate seed build
