@@ -11,6 +11,7 @@ export default defineConfig({
     },
   },
   server: {
+    host: true,
     proxy: {
       '/telemetry': 'http://localhost:8081',
       '/plcs': 'http://localhost:8081',

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -77,16 +78,30 @@ func (s *ProductionStore) ListRuns(machineID int, limit int) []models.Production
 		return nil
 	}
 
-	rows, err := db.Query(
-		`SELECT pr.id, pr.machine_id, COALESCE(m.machine_name, ''), pr.batch_id, pr.product_name,
-		        pr.target_qty, pr.good_qty, pr.bad_qty, pr.start_time, pr.end_time, pr.status, pr.created_at
-		 FROM production_runs pr
-		 JOIN machines m ON m.id = pr.machine_id
-		 WHERE pr.machine_id = $1
-		 ORDER BY pr.start_time DESC
-		 LIMIT $2`,
-		machineID, limit,
-	)
+	var rows *sql.Rows
+	var err error
+	if machineID > 0 {
+		rows, err = db.Query(
+			`SELECT pr.id, pr.machine_id, COALESCE(m.machine_name, ''), pr.batch_id, pr.product_name,
+			        pr.target_qty, pr.good_qty, pr.bad_qty, pr.start_time, pr.end_time, pr.status, pr.created_at
+			 FROM production_runs pr
+			 JOIN machines m ON m.id = pr.machine_id
+			 WHERE pr.machine_id = $1
+			 ORDER BY pr.start_time DESC
+			 LIMIT $2`,
+			machineID, limit,
+		)
+	} else {
+		rows, err = db.Query(
+			`SELECT pr.id, pr.machine_id, COALESCE(m.machine_name, ''), pr.batch_id, pr.product_name,
+			        pr.target_qty, pr.good_qty, pr.bad_qty, pr.start_time, pr.end_time, pr.status, pr.created_at
+			 FROM production_runs pr
+			 JOIN machines m ON m.id = pr.machine_id
+			 ORDER BY pr.start_time DESC
+			 LIMIT $1`,
+			limit,
+		)
+	}
 	if err != nil {
 		return nil
 	}
@@ -191,16 +206,30 @@ func (s *ProductionStore) ListDowntime(machineID int, limit int) []models.Downti
 		return nil
 	}
 
-	rows, err := db.Query(
-		`SELECT de.id, de.machine_id, COALESCE(m.machine_name, ''), de.start_time, de.end_time,
-		        de.reason, de.category, de.duration_seconds, de.created_at
-		 FROM downtime_events de
-		 JOIN machines m ON m.id = de.machine_id
-		 WHERE de.machine_id = $1
-		 ORDER BY de.start_time DESC
-		 LIMIT $2`,
-		machineID, limit,
-	)
+	var rows *sql.Rows
+	var err error
+	if machineID > 0 {
+		rows, err = db.Query(
+			`SELECT de.id, de.machine_id, COALESCE(m.machine_name, ''), de.start_time, de.end_time,
+			        de.reason, de.category, de.duration_seconds, de.created_at
+			 FROM downtime_events de
+			 JOIN machines m ON m.id = de.machine_id
+			 WHERE de.machine_id = $1
+			 ORDER BY de.start_time DESC
+			 LIMIT $2`,
+			machineID, limit,
+		)
+	} else {
+		rows, err = db.Query(
+			`SELECT de.id, de.machine_id, COALESCE(m.machine_name, ''), de.start_time, de.end_time,
+			        de.reason, de.category, de.duration_seconds, de.created_at
+			 FROM downtime_events de
+			 JOIN machines m ON m.id = de.machine_id
+			 ORDER BY de.start_time DESC
+			 LIMIT $1`,
+			limit,
+		)
+	}
 	if err != nil {
 		return nil
 	}

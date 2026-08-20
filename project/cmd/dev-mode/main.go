@@ -12,44 +12,13 @@ import (
 	"pharma-platform/internal/api"
 	"pharma-platform/internal/api/handlers"
 	"pharma-platform/internal/business"
-	"pharma-platform/internal/collector"
 	"pharma-platform/internal/config"
 	"pharma-platform/internal/models"
-	"pharma-platform/internal/plc"
 	"pharma-platform/internal/postgres"
 	"pharma-platform/internal/questdb"
 	"pharma-platform/internal/simulation"
 	"pharma-platform/internal/store"
 )
-
-type mockDriver struct {
-	offset float64
-}
-
-var _ plc.Driver = (*mockDriver)(nil)
-
-func (m *mockDriver) Connect(ctx context.Context) error { return nil }
-func (m *mockDriver) Close() error                      { return nil }
-func (m *mockDriver) Read(ctx context.Context, tag models.Tag) (models.Sample, error) {
-	base := 42.0
-	switch tag.DataType {
-	case models.DataTypeBool:
-		base = 1.0
-	case models.DataTypeInt16, models.DataTypeInt32:
-		base = 100.0
-	case models.DataTypeFloat32, models.DataTypeFloat64:
-		base = 42.0
-	}
-	val := base + m.offset // simple offset, real data comes from simulation
-	return models.Sample{
-		Timestamp:   time.Now(),
-		MachineID:   fmt.Sprintf("%d", tag.MachineID),
-		MachineName: tag.MachineName,
-		TagName:     tag.Name,
-		Value:       val,
-		Quality:     models.QualityGood,
-	}, nil
-}
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -116,19 +85,7 @@ func main() {
 	rawSamples := make(chan models.Sample, 100000)
 	writerSamples := make(chan models.Sample, 100000)
 
-	collectorCfg := config.CollectorConfig{
-		Workers:   16,
-		QueueSize: 10000,
-	}
-
-	driver := &mockDriver{}
-	collectorService := collector.New(driver, collectorCfg, tags, rawSamples)
-
 	writer := questdb.NewWriter(questClient, "plc_samples", writerSamples)
-
-	if err := collectorService.Start(ctx); err != nil {
-		log.Fatal(err)
-	}
 
 	go func() {
 		if err := writer.Start(ctx); err != nil {
@@ -140,15 +97,43 @@ func main() {
 	// transitions on the way through, since nothing else in the pipeline
 	// evaluates tag thresholds. This is what populates the QuestDB `alarms`
 	// and `machine_state` tables that the real alarm store and MTBF/MTTR
-	// analysis read from.
+	// analysis read from, and drives the Postgres `production_runs` /
+	// `downtime_events` rows that OEE and the Production page read from.
 	go func() {
 		lastAlarmActive := make(map[string]bool)
 		lastRunning := make(map[string]bool)
+		activeRun := make(map[string]int)
+		activeDowntime := make(map[string]int)
+		lastGood := make(map[string]int)
+		lastBad := make(map[string]int)
+
+		machineIDFrom := func(s string) int {
+			id := 0
+			fmt.Sscanf(s, "%d", &id)
+			return id
+		}
+
+		toFloat := func(v any) float64 {
+			switch n := v.(type) {
+			case float64:
+				return n
+			case float32:
+				return float64(n)
+			case int:
+				return float64(n)
+			case int32:
+				return float64(n)
+			case int64:
+				return float64(n)
+			default:
+				return 0
+			}
+		}
 
 		for s := range rawSamples {
 			switch s.TagName {
 			case "Alarm_Status", "AlarmStatus":
-				active := s.Value == 1
+				active := toFloat(s.Value) == 1
 				if active && !lastAlarmActive[s.MachineID] {
 					severity := "warning"
 					if fault, ok := lastRunning[s.MachineID]; ok && !fault {
@@ -162,7 +147,7 @@ func main() {
 				lastAlarmActive[s.MachineID] = active
 
 			case "Run_Status", "RunStatus":
-				running := s.Value == 1
+				running := toFloat(s.Value) == 1
 				if prev, ok := lastRunning[s.MachineID]; !ok || prev != running {
 					state := "stopped"
 					if running {
@@ -171,8 +156,44 @@ func main() {
 					if err := reader.InsertMachineState(ctx, s.MachineID, state, 0, 0, 0); err != nil {
 						log.Printf("insert machine_state: %v", err)
 					}
+
+					machineID := machineIDFrom(s.MachineID)
+					if running {
+						if downID, ok := activeDowntime[s.MachineID]; ok {
+							_ = productionStore.EndDowntime(downID)
+							delete(activeDowntime, s.MachineID)
+						}
+						if _, ok := activeRun[s.MachineID]; !ok {
+							if run, err := productionStore.CreateRun(machineID, fmt.Sprintf("SIM-%s-%d", s.MachineID, s.Timestamp.Unix()), "", 0); err == nil {
+								activeRun[s.MachineID] = run.ID
+							}
+						}
+					} else {
+						if runID, ok := activeRun[s.MachineID]; ok {
+							_ = productionStore.UpdateRunCounts(runID, lastGood[s.MachineID], lastBad[s.MachineID])
+							_ = productionStore.CompleteRun(runID)
+							delete(activeRun, s.MachineID)
+						}
+						if _, ok := activeDowntime[s.MachineID]; !ok {
+							if down, err := productionStore.StartDowntime(machineID, "machine stopped", "unplanned"); err == nil {
+								activeDowntime[s.MachineID] = down.ID
+							}
+						}
+					}
 				}
 				lastRunning[s.MachineID] = running
+
+			case "Good_Count", "GoodCount", "Good_Print_Count":
+				lastGood[s.MachineID] = int(toFloat(s.Value))
+				if runID, ok := activeRun[s.MachineID]; ok {
+					_ = productionStore.UpdateRunCounts(runID, lastGood[s.MachineID], lastBad[s.MachineID])
+				}
+
+			case "Reject_Count", "RejectCount":
+				lastBad[s.MachineID] = int(toFloat(s.Value))
+				if runID, ok := activeRun[s.MachineID]; ok {
+					_ = productionStore.UpdateRunCounts(runID, lastGood[s.MachineID], lastBad[s.MachineID])
+				}
 			}
 
 			select {
@@ -204,10 +225,9 @@ func main() {
 	tagHandler := handlers.NewTagHandler(tagStore)
 	machineHandler := handlers.NewMachineHandler(machineStore, reader)
 	analyticsHandler := handlers.NewAnalyticsHandler(tagStore, reader)
-	collectorAdapter := &handlers.CollectorAdapter{C: collectorService}
-	collectorHandler := handlers.NewCollectorHandler(collectorAdapter)
+	collectorHandler := handlers.NewCollectorHandler(sim)
 	alarmHandler := handlers.NewAlarmHandler(alarmStore)
-	systemHandler := handlers.NewSystemHandler(machineStore, alarmStore, collectorService)
+	systemHandler := handlers.NewSystemHandler(machineStore, alarmStore, sim)
 	dashboardHandler := handlers.NewDashboardHandler(productionStore, alarmStore)
 	oeeHandler := handlers.NewOEEHandler(productionStore)
 	productionHandler := handlers.NewProductionHandler(productionStore)
@@ -219,7 +239,7 @@ func main() {
 		TagStore:        tagStore,
 		Reader:          reader,
 		AlarmAckStore:   alarmAckStore,
-		CollectorPaused: collectorService.IsPaused,
+		CollectorPaused: sim.IsPaused,
 	})
 
 	bizAnalyticsHandler := handlers.NewBusinessAnalyticsHandler(bizEngine)
@@ -257,14 +277,13 @@ func main() {
 		s := <-sig
 		switch s {
 		case syscall.SIGUSR1:
-			collectorService.Pause()
-			log.Println("collector paused")
+			sim.Pause()
+			log.Println("simulator paused")
 		case syscall.SIGUSR2:
-			collectorService.Resume()
-			log.Println("collector resumed")
+			sim.Resume()
+			log.Println("simulator resumed")
 		default:
 			log.Println("shutting down...")
-			collectorService.Stop()
 			close(rawSamples)
 			writer.Stop()
 			cancel()

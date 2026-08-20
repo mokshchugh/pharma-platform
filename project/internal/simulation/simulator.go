@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"pharma-platform/internal/models"
@@ -41,6 +42,10 @@ type Simulator struct {
 	machines    map[int]*MachineSim
 	samplesChan chan<- models.Sample
 	cycle       int
+
+	paused      atomic.Bool
+	tickCount   atomic.Int64
+	dispatchSum atomic.Int64
 }
 
 func New(samplesChan chan<- models.Sample) *Simulator {
@@ -50,9 +55,20 @@ func New(samplesChan chan<- models.Sample) *Simulator {
 	}
 }
 
+func (s *Simulator) Pause()             { s.paused.Store(true) }
+func (s *Simulator) Resume()            { s.paused.Store(false) }
+func (s *Simulator) IsPaused() bool     { return s.paused.Load() }
+func (s *Simulator) TickCount() int64   { return s.tickCount.Load() }
+func (s *Simulator) DispatchSum() int64 { return s.dispatchSum.Load() }
+
 func (s *Simulator) Tick() {
+	if s.paused.Load() {
+		return
+	}
+
 	now := time.Now()
 	s.cycle++
+	s.tickCount.Add(1)
 
 	for _, tag := range allTags() {
 		sim := s.getOrCreateMachine(tag.MachineID, tag.MachineName)
@@ -65,6 +81,7 @@ func (s *Simulator) Tick() {
 			Value:       val,
 			Quality:     models.QualityGood,
 		}
+		s.dispatchSum.Add(1)
 	}
 }
 
@@ -158,13 +175,13 @@ func (s *Simulator) simulateValue(tag simulatedTag, sim *MachineSim, now time.Ti
 		if !running {
 			return 0
 		}
-		return math.Round((200 + math.Sin(float64(s.cycle)*0.004)*50 + randFloat(-5, 5))*10) / 10
+		return math.Round((200+math.Sin(float64(s.cycle)*0.004)*50+randFloat(-5, 5))*10) / 10
 
 	case "Atomization_Air_Pressure":
 		if !running {
 			return 0
 		}
-		return math.Round((2.5 + math.Sin(float64(s.cycle)*0.001)*0.5 + randFloat(-0.05, 0.05))*100) / 100
+		return math.Round((2.5+math.Sin(float64(s.cycle)*0.001)*0.5+randFloat(-0.05, 0.05))*100) / 100
 
 	case "Peristaltic_Pump_Speed":
 		if !running {
@@ -182,13 +199,13 @@ func (s *Simulator) simulateValue(tag simulatedTag, sim *MachineSim, now time.Ti
 		if !running {
 			return randFloat(0, 5)
 		}
-		return math.Round((20 + math.Sin(float64(s.cycle)*0.005)*3 + randFloat(-0.5, 0.5))*10) / 10
+		return math.Round((20+math.Sin(float64(s.cycle)*0.005)*3+randFloat(-0.5, 0.5))*10) / 10
 
 	case "PreCompression_Force", "PreCompForce":
 		if !running {
 			return randFloat(0, 2)
 		}
-		return math.Round((5 + math.Sin(float64(s.cycle)*0.004)*1 + randFloat(-0.3, 0.3))*10) / 10
+		return math.Round((5+math.Sin(float64(s.cycle)*0.004)*1+randFloat(-0.3, 0.3))*10) / 10
 
 	case "Machine_Speed", "TurretSpeed":
 		if !running {
@@ -239,7 +256,7 @@ func (s *Simulator) simulateValue(tag simulatedTag, sim *MachineSim, now time.Ti
 		if !running {
 			return 0
 		}
-		return math.Round((1.5 + math.Sin(float64(s.cycle)*0.001)*0.3 + randFloat(-0.05, 0.05))*100) / 100
+		return math.Round((1.5+math.Sin(float64(s.cycle)*0.001)*0.3+randFloat(-0.05, 0.05))*100) / 100
 
 	case "Reject_Reason_Code":
 		return float64(randInt(0, 5))
@@ -260,7 +277,7 @@ func (s *Simulator) simulateValue(tag simulatedTag, sim *MachineSim, now time.Ti
 		if !running {
 			return 0
 		}
-		return math.Round((50 + math.Sin(float64(s.cycle)*0.003)*20 + randFloat(-2, 2))*10) / 10
+		return math.Round((50+math.Sin(float64(s.cycle)*0.003)*20+randFloat(-2, 2))*10) / 10
 
 	case "Impeller_Motor_Load":
 		if !running {
@@ -296,13 +313,13 @@ func (s *Simulator) simulateValue(tag simulatedTag, sim *MachineSim, now time.Ti
 		return float64(s.cycle / 50)
 
 	case "Weight_Gain_Percent":
-		return math.Round((3 + math.Sin(float64(s.cycle)*0.001)*1 + randFloat(-0.1, 0.1))*10) / 10
+		return math.Round((3+math.Sin(float64(s.cycle)*0.001)*1+randFloat(-0.1, 0.1))*10) / 10
 
 	case "Gun_Air_Pressure":
 		if !running {
 			return 0
 		}
-		return math.Round((2.0 + math.Sin(float64(s.cycle)*0.002)*0.3 + randFloat(-0.05, 0.05))*100) / 100
+		return math.Round((2.0+math.Sin(float64(s.cycle)*0.002)*0.3+randFloat(-0.05, 0.05))*100) / 100
 
 	case "PrintHead_Fault":
 		if sim.faulted {
