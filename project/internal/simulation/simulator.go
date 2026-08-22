@@ -28,20 +28,37 @@ func randInt(min, max int) int {
 	return min + rng.Intn(max-min+1)
 }
 
+func chance(oneInN int) bool {
+	rngMu.Lock()
+	defer rngMu.Unlock()
+	return rng.Intn(oneInN) == 0
+}
+
+// MachineSim holds a single machine's simulated state. cycle, speed,
+// goodCount and rejectCount are all per-machine so different machines
+// produce genuinely independent, differentiated telemetry instead of
+// sharing one global clock.
 type MachineSim struct {
 	MachineID   int
 	MachineName string
-	running     bool
-	faulted     bool
-	phaseStart  time.Time
-	speed       float64
+
+	running bool
+	faulted bool
+	cycle   int
+
+	speed      float64 // baseline throughput/RPM character for this machine
+	rejectRate float64 // this machine's baseline defect rate
+
+	goodCount   int // lifetime part counter, like a real PLC register
+	rejectCount int
+
+	downTicksLeft int
 }
 
 type Simulator struct {
 	mu          sync.RWMutex
 	machines    map[int]*MachineSim
 	samplesChan chan<- models.Sample
-	cycle       int
 
 	paused      atomic.Bool
 	tickCount   atomic.Int64
@@ -67,8 +84,13 @@ func (s *Simulator) Tick() {
 	}
 
 	now := time.Now()
-	s.cycle++
 	s.tickCount.Add(1)
+
+	s.mu.Lock()
+	for _, sim := range s.machines {
+		s.advance(sim)
+	}
+	s.mu.Unlock()
 
 	for _, tag := range allTags() {
 		sim := s.getOrCreateMachine(tag.MachineID, tag.MachineName)
@@ -85,6 +107,49 @@ func (s *Simulator) Tick() {
 	}
 }
 
+// advance moves one machine's simulated physical state forward by one
+// tick: fault/recovery scheduling and production counting. This is the
+// only place that mutates running/faulted/goodCount/rejectCount, and it
+// runs exactly once per machine per tick (not once per tag).
+func (s *Simulator) advance(sim *MachineSim) {
+	sim.cycle++
+
+	if sim.faulted {
+		sim.downTicksLeft--
+		if sim.downTicksLeft <= 0 {
+			sim.faulted = false
+			sim.running = true
+		}
+		return
+	}
+
+	if !sim.running {
+		return
+	}
+
+	// Unplanned fault: roughly once every ~5 minutes of running time per
+	// machine at a 100ms tick rate, so downtime/availability actually
+	// varies instead of being pinned at 100%.
+	if chance(3000) {
+		sim.faulted = true
+		sim.running = false
+		sim.downTicksLeft = randInt(50, 600) // 5s-60s recovery
+		return
+	}
+
+	// Production: probability per tick scaled by this machine's speed,
+	// so faster/slower machines accumulate parts at different rates.
+	// goodCount/rejectCount are lifetime counters — they hold their
+	// value while stopped, like a real PLC register would.
+	if randFloat(0, 1) < sim.speed/1000.0 {
+		if randFloat(0, 1) < sim.rejectRate {
+			sim.rejectCount++
+		} else {
+			sim.goodCount++
+		}
+	}
+}
+
 func (s *Simulator) getOrCreateMachine(id int, name string) *MachineSim {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -95,15 +160,10 @@ func (s *Simulator) getOrCreateMachine(id int, name string) *MachineSim {
 			MachineID:   id,
 			MachineName: name,
 			running:     true,
-			phaseStart:  time.Now(),
 			speed:       75 + randFloat(0, 25),
+			rejectRate:  randFloat(0.02, 0.08),
 		}
 		s.machines[id] = sim
-	}
-
-	if sim.faulted && rand.Intn(200) == 0 {
-		sim.faulted = false
-		sim.running = true
 	}
 
 	return sim
@@ -111,12 +171,10 @@ func (s *Simulator) getOrCreateMachine(id int, name string) *MachineSim {
 
 func (s *Simulator) simulateValue(tag simulatedTag, sim *MachineSim, now time.Time) float64 {
 	running := sim.running && !sim.faulted
+	cycle := sim.cycle
 
 	switch tag.Name {
 	case "Run_Status", "RunStatus":
-		if sim.faulted {
-			return 0
-		}
 		if running {
 			return 1
 		}
@@ -126,7 +184,7 @@ func (s *Simulator) simulateValue(tag simulatedTag, sim *MachineSim, now time.Ti
 		if sim.faulted {
 			return 1
 		}
-		if rand.Intn(500) == 0 {
+		if chance(500) {
 			return 1
 		}
 		return 0
@@ -136,8 +194,8 @@ func (s *Simulator) simulateValue(tag simulatedTag, sim *MachineSim, now time.Ti
 
 	case "Inlet_Air_Temp", "Outlet_Air_Temp", "Exhaust_Air_Temp":
 		base := 80.0
-		phase := math.Sin(float64(s.cycle) * 0.001)
-		ramp := math.Abs(math.Sin(float64(s.cycle) * 0.0003))
+		phase := math.Sin(float64(cycle) * 0.001)
+		ramp := math.Abs(math.Sin(float64(cycle) * 0.0003))
 		temp := base + ramp*30 + phase*5 + randFloat(-1, 1)
 		if !running {
 			temp = 25 + randFloat(-2, 2)
@@ -146,7 +204,7 @@ func (s *Simulator) simulateValue(tag simulatedTag, sim *MachineSim, now time.Ti
 
 	case "Product_Temp":
 		base := 55.0
-		ramp := math.Abs(math.Sin(float64(s.cycle) * 0.0002))
+		ramp := math.Abs(math.Sin(float64(cycle) * 0.0002))
 		temp := base + ramp*40 + randFloat(-0.5, 0.5)
 		if !running {
 			temp = 25 + randFloat(-1, 1)
@@ -157,106 +215,100 @@ func (s *Simulator) simulateValue(tag simulatedTag, sim *MachineSim, now time.Ti
 		if !running {
 			return randFloat(0, 2)
 		}
-		return math.Round((10+math.Sin(float64(s.cycle)*0.005)*5+randFloat(-0.5, 0.5))*10) / 10
+		return math.Round((10+math.Sin(float64(cycle)*0.005)*5+randFloat(-0.5, 0.5))*10) / 10
 
 	case "Fan_Speed", "Blower_Speed":
 		if !running {
 			return randFloat(0, 5)
 		}
-		return math.Round(sim.speed + math.Sin(float64(s.cycle)*0.002)*10 + randFloat(-2, 2))
+		return math.Round(sim.speed + math.Sin(float64(cycle)*0.002)*10 + randFloat(-2, 2))
 
 	case "Damper_Position":
 		if !running {
 			return 0
 		}
-		return math.Round(50 + math.Sin(float64(s.cycle)*0.003)*30 + randFloat(-2, 2))
+		return math.Round(50 + math.Sin(float64(cycle)*0.003)*30 + randFloat(-2, 2))
 
 	case "Spray_Rate":
 		if !running {
 			return 0
 		}
-		return math.Round((200+math.Sin(float64(s.cycle)*0.004)*50+randFloat(-5, 5))*10) / 10
+		return math.Round((200+math.Sin(float64(cycle)*0.004)*50+randFloat(-5, 5))*10) / 10
 
 	case "Atomization_Air_Pressure":
 		if !running {
 			return 0
 		}
-		return math.Round((2.5+math.Sin(float64(s.cycle)*0.001)*0.5+randFloat(-0.05, 0.05))*100) / 100
+		return math.Round((2.5+math.Sin(float64(cycle)*0.001)*0.5+randFloat(-0.05, 0.05))*100) / 100
 
 	case "Peristaltic_Pump_Speed":
 		if !running {
 			return 0
 		}
-		return math.Round(30 + math.Sin(float64(s.cycle)*0.003)*15 + randFloat(-1, 1))
+		return math.Round(30 + math.Sin(float64(cycle)*0.003)*15 + randFloat(-1, 1))
 
 	case "Pan_Speed":
 		if !running {
 			return 0
 		}
-		return math.Round(8 + math.Sin(float64(s.cycle)*0.001)*2 + randFloat(-0.5, 0.5))
+		return math.Round(8 + math.Sin(float64(cycle)*0.001)*2 + randFloat(-0.5, 0.5))
 
 	case "Main_Compression_Force", "MainCompForce":
 		if !running {
 			return randFloat(0, 5)
 		}
-		return math.Round((20+math.Sin(float64(s.cycle)*0.005)*3+randFloat(-0.5, 0.5))*10) / 10
+		return math.Round((20+math.Sin(float64(cycle)*0.005)*3+randFloat(-0.5, 0.5))*10) / 10
 
 	case "PreCompression_Force", "PreCompForce":
 		if !running {
 			return randFloat(0, 2)
 		}
-		return math.Round((5+math.Sin(float64(s.cycle)*0.004)*1+randFloat(-0.3, 0.3))*10) / 10
+		return math.Round((5+math.Sin(float64(cycle)*0.004)*1+randFloat(-0.3, 0.3))*10) / 10
 
 	case "Machine_Speed", "TurretSpeed":
 		if !running {
 			return 0
 		}
-		return math.Round(sim.speed + math.Sin(float64(s.cycle)*0.001)*5 + randFloat(-1, 1))
+		return math.Round(sim.speed + math.Sin(float64(cycle)*0.001)*5 + randFloat(-1, 1))
 
 	case "Ejection_Force", "EjectionForce":
 		if !running {
 			return randFloat(0, 5)
 		}
-		return math.Round(50 + math.Sin(float64(s.cycle)*0.003)*10 + randFloat(-2, 2))
+		return math.Round(50 + math.Sin(float64(cycle)*0.003)*10 + randFloat(-2, 2))
 
 	case "Upper_Punch_Penetration":
-		return math.Round(3 + math.Sin(float64(s.cycle)*0.001)*0.5 + randFloat(-0.1, 0.1))
+		return math.Round(3 + math.Sin(float64(cycle)*0.001)*0.5 + randFloat(-0.1, 0.1))
 
 	case "Avg_Tablet_Weight":
 		if !running {
 			return 0
 		}
-		return math.Round(500 + math.Sin(float64(s.cycle)*0.002)*10 + randFloat(-2, 2))
+		return math.Round(500 + math.Sin(float64(cycle)*0.002)*10 + randFloat(-2, 2))
 
 	case "Good_Count", "GoodCount", "Good_Print_Count":
-		if !running {
-			return 0
-		}
-		return float64(s.cycle / 5)
+		return float64(sim.goodCount)
 
 	case "Reject_Count", "RejectCount":
-		if !running {
-			return 0
-		}
-		return float64(s.cycle / 100)
+		return float64(sim.rejectCount)
 
 	case "Hopper_Level", "HopperLevel":
 		if !running {
 			return 0
 		}
-		return math.Round(70 + math.Sin(float64(s.cycle)*0.001)*20 + randFloat(-2, 2))
+		return math.Round(70 + math.Sin(float64(cycle)*0.001)*20 + randFloat(-2, 2))
 
 	case "Ink_Level":
-		return math.Round(80 + math.Sin(float64(s.cycle)*0.0005)*15 + randFloat(-1, 1))
+		return math.Round(80 + math.Sin(float64(cycle)*0.0005)*15 + randFloat(-1, 1))
 
 	case "CheckWeight":
-		return math.Round(500 + math.Sin(float64(s.cycle)*0.002)*5 + randFloat(-3, 3))
+		return math.Round(500 + math.Sin(float64(cycle)*0.002)*5 + randFloat(-3, 3))
 
 	case "Line_Speed":
 		if !running {
 			return 0
 		}
-		return math.Round((1.5+math.Sin(float64(s.cycle)*0.001)*0.3+randFloat(-0.05, 0.05))*100) / 100
+		return math.Round((1.5+math.Sin(float64(cycle)*0.001)*0.3+randFloat(-0.05, 0.05))*100) / 100
 
 	case "Reject_Reason_Code":
 		return float64(randInt(0, 5))
@@ -265,61 +317,61 @@ func (s *Simulator) simulateValue(tag simulatedTag, sim *MachineSim, now time.Ti
 		if !running {
 			return 0
 		}
-		return math.Round(150 + math.Sin(float64(s.cycle)*0.002)*30 + randFloat(-5, 5))
+		return math.Round(150 + math.Sin(float64(cycle)*0.002)*30 + randFloat(-5, 5))
 
 	case "Chopper_Speed":
 		if !running {
 			return 0
 		}
-		return math.Round(3000 + math.Sin(float64(s.cycle)*0.001)*500 + randFloat(-50, 50))
+		return math.Round(3000 + math.Sin(float64(cycle)*0.001)*500 + randFloat(-50, 50))
 
 	case "Binder_Addition_Rate":
 		if !running {
 			return 0
 		}
-		return math.Round((50+math.Sin(float64(s.cycle)*0.003)*20+randFloat(-2, 2))*10) / 10
+		return math.Round((50+math.Sin(float64(cycle)*0.003)*20+randFloat(-2, 2))*10) / 10
 
 	case "Impeller_Motor_Load":
 		if !running {
 			return 0
 		}
-		return math.Round(60 + math.Sin(float64(s.cycle)*0.002)*15 + randFloat(-2, 2))
+		return math.Round(60 + math.Sin(float64(cycle)*0.002)*15 + randFloat(-2, 2))
 
 	case "Kneading_Timer_Elapsed":
-		return float64(s.cycle) * 0.1
+		return float64(cycle) * 0.1
 
 	case "Blender_RPM":
 		if !running {
 			return 0
 		}
-		return math.Round(25 + math.Sin(float64(s.cycle)*0.003)*5 + randFloat(-1, 1))
+		return math.Round(25 + math.Sin(float64(cycle)*0.003)*5 + randFloat(-1, 1))
 
 	case "Blend_Timer_Elapsed":
-		return float64(s.cycle) * 0.1
+		return float64(cycle) * 0.1
 
 	case "Load_Cell_Weight":
 		if !running {
 			return randFloat(0, 50)
 		}
-		return math.Round(200 + math.Sin(float64(s.cycle)*0.002)*20 + randFloat(-1, 1))
+		return math.Round(200 + math.Sin(float64(cycle)*0.002)*20 + randFloat(-1, 1))
 
 	case "Batch_ID":
 		return 1001
 
 	case "Process_Timer_Elapsed":
-		return float64(s.cycle) * 0.1
+		return float64(cycle) * 0.1
 
 	case "Bag_Shake_Count":
-		return float64(s.cycle / 50)
+		return float64(cycle / 50)
 
 	case "Weight_Gain_Percent":
-		return math.Round((3+math.Sin(float64(s.cycle)*0.001)*1+randFloat(-0.1, 0.1))*10) / 10
+		return math.Round((3+math.Sin(float64(cycle)*0.001)*1+randFloat(-0.1, 0.1))*10) / 10
 
 	case "Gun_Air_Pressure":
 		if !running {
 			return 0
 		}
-		return math.Round((2.0+math.Sin(float64(s.cycle)*0.002)*0.3+randFloat(-0.05, 0.05))*100) / 100
+		return math.Round((2.0+math.Sin(float64(cycle)*0.002)*0.3+randFloat(-0.05, 0.05))*100) / 100
 
 	case "PrintHead_Fault":
 		if sim.faulted {
@@ -331,7 +383,7 @@ func (s *Simulator) simulateValue(tag simulatedTag, sim *MachineSim, now time.Ti
 		return 0
 
 	case "Process_Phase":
-		return float64((s.cycle / 200) % 5)
+		return float64((cycle / 200) % 5)
 
 	case "Filter_DP_Alarm_Setpoint":
 		return 15
@@ -343,7 +395,7 @@ func (s *Simulator) simulateValue(tag simulatedTag, sim *MachineSim, now time.Ti
 			}
 			return 0
 		}
-		return 42 + math.Sin(float64(s.cycle)*0.001)*10 + randFloat(-2, 2)
+		return 42 + math.Sin(float64(cycle)*0.001)*10 + randFloat(-2, 2)
 	}
 }
 

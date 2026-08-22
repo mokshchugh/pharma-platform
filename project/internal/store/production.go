@@ -160,6 +160,21 @@ func (s *ProductionStore) UpdateRunCounts(id int, good int, bad int) error {
 	return nil
 }
 
+// CloseStaleRunsAndDowntime force-closes any production_runs/downtime_events
+// left open by a previous process that exited without a clean shutdown
+// (e.g. a crash or a dev restart). Without this, orphaned 'running' rows
+// stick around forever and get double-counted by CalculateOEE, which
+// sums by time window without filtering on status.
+func (s *ProductionStore) CloseStaleRunsAndDowntime() {
+	db := s.client.DB()
+	if db == nil {
+		return
+	}
+
+	_, _ = db.Exec(`UPDATE production_runs SET end_time = now(), status = 'completed' WHERE status = 'running'`)
+	_, _ = db.Exec(`UPDATE downtime_events SET end_time = now(), duration_seconds = COALESCE(EXTRACT(EPOCH FROM now() - start_time)::INTEGER, 0) WHERE end_time IS NULL`)
+}
+
 func (s *ProductionStore) CompleteRun(id int) error {
 	db := s.client.DB()
 	if db == nil {

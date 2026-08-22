@@ -61,6 +61,7 @@ func main() {
 	alarmStore := handlers.NewAlarmStore(reader, alarmAckStore)
 	controlStore := store.NewControlStore(postgresClient)
 	dummyCollector := &dummyCollector{}
+	productionStore.CloseStaleRunsAndDowntime()
 
 	allMachines, _ := machineStore.GetAllMachines()
 	machineIDs := make([]int, 0, len(allMachines))
