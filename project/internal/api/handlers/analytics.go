@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"pharma-platform/internal/models"
@@ -30,17 +29,17 @@ type AnalyticsPoint struct {
 }
 
 type TagAnalyticsResponse struct {
-	TagID            int               `json:"tag_id"`
-	TagName          string            `json:"tag_name"`
-	DataType         string            `json:"data_type"`
-	Unit             string            `json:"unit"`
-	Current          *AnalyticsPoint   `json:"current,omitempty"`
-	LatestValue      *float64          `json:"latest_value,omitempty"`
-	Series           []AnalyticsPoint  `json:"series,omitempty"`
+	TagID            int              `json:"tag_id"`
+	TagName          string           `json:"tag_name"`
+	DataType         string           `json:"data_type"`
+	Unit             string           `json:"unit"`
+	Current          *AnalyticsPoint  `json:"current,omitempty"`
+	LatestValue      *float64         `json:"latest_value,omitempty"`
+	Series           []AnalyticsPoint `json:"series,omitempty"`
 	TotalSampleCount int64            `json:"total_sample_count"`
-	WindowAvg        float64           `json:"window_avg"`
-	WindowMin        float64           `json:"window_min"`
-	WindowMax        float64           `json:"window_max"`
+	WindowAvg        float64          `json:"window_avg"`
+	WindowMin        float64          `json:"window_min"`
+	WindowMax        float64          `json:"window_max"`
 }
 
 type AnalyticsResponse struct {
@@ -68,7 +67,7 @@ func (h *AnalyticsHandler) GetTelemetry(w http.ResponseWriter, r *http.Request) 
 	resp := make([]TelemetryTagResponse, 0, len(tags))
 	for _, t := range tags {
 		resp = append(resp, TelemetryTagResponse{
-			TagID:    parseTagNumericID(t.ID),
+			TagID:    parseTrailingID(t.ID),
 			TagName:  t.Name,
 			DataType: t.DataType.String(),
 			Unit:     t.Unit,
@@ -119,7 +118,7 @@ func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) 
 
 	for _, t := range tags {
 		tagResp := TagAnalyticsResponse{
-			TagID:    parseTagNumericID(t.ID),
+			TagID:    parseTrailingID(t.ID),
 			TagName:  t.Name,
 			DataType: t.DataType.String(),
 			Unit:     t.Unit,
@@ -211,18 +210,3 @@ func aggregateRowToPoint(row *questdb.AggregateRow) *AnalyticsPoint {
 		SampleCount: row.SampleCount,
 	}
 }
-
-func parseTagNumericID(id string) int {
-	parts := strings.SplitN(id, "-", 2)
-	if len(parts) == 2 {
-		if n, err := strconv.Atoi(parts[1]); err == nil {
-			return n
-		}
-	}
-	if n, err := strconv.Atoi(id); err == nil {
-		return n
-	}
-	return 0
-}
-
-

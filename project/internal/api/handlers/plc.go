@@ -3,8 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"pharma-platform/internal/models"
 
@@ -19,13 +17,13 @@ type PLCStore interface {
 }
 
 type PLCResponse struct {
-	ID        string           `json:"id"`
-	MachineID int              `json:"machine_id"`
-	Name      string           `json:"machine_name"`
+	ID        string            `json:"id"`
+	MachineID int               `json:"machine_id"`
+	Name      string            `json:"machine_name"`
 	Driver    models.DriverType `json:"driver"`
-	IPAddress string           `json:"ip_address"`
-	Port      uint16           `json:"port"`
-	Enabled   bool             `json:"enabled"`
+	IPAddress string            `json:"ip_address"`
+	Port      uint16            `json:"port"`
+	Enabled   bool              `json:"enabled"`
 }
 
 type PLCStatusResponse struct {
@@ -50,7 +48,7 @@ func (h *PLCHandler) List(w http.ResponseWriter, r *http.Request) {
 	for _, p := range plcs {
 		resp = append(resp, PLCResponse{
 			ID:        p.ID,
-			MachineID: parseMachineNumericID(p.ID),
+			MachineID: parseTrailingID(p.ID),
 			Name:      p.Name,
 			Driver:    p.Driver,
 			IPAddress: p.IPAddress,
@@ -73,7 +71,7 @@ func (h *PLCHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	resp := PLCResponse{
 		ID:        plc.ID,
-		MachineID: parseMachineNumericID(plc.ID),
+		MachineID: parseTrailingID(plc.ID),
 		Name:      plc.Name,
 		Driver:    plc.Driver,
 	}
@@ -107,18 +105,6 @@ func (h *PLCHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
-}
-
-func parseMachineNumericID(id string) int {
-	parts := strings.SplitN(id, "-", 2)
-	if len(parts) != 2 {
-		return 0
-	}
-	n, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return 0
-	}
-	return n
 }
 
 type ToggleRequest struct {

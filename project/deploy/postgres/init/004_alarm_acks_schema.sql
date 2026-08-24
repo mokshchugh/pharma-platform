@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS alarm_acks (
     id SERIAL PRIMARY KEY,
-    machine_id TEXT NOT NULL,
+    machine_id INTEGER NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
     tag_name TEXT NOT NULL,
     alarm_ts TIMESTAMPTZ NOT NULL,
     acked_at TIMESTAMPTZ NOT NULL DEFAULT now()

@@ -11,14 +11,9 @@ logs/
 coverage.out
 
 # Build artifacts
-/pharma-platform
-/collector-sim
-/quest-simulator
-/dev-mode
 /project/migrate
+/project/seed
 /project/dev-mode
-/project/api
-/project/collector-sim
 /project/pharma-platform
 
 # Node

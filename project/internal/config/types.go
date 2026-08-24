@@ -1,19 +1,16 @@
 package config
 
 import (
-	"time"
-
 	"pharma-platform/internal/postgres"
 	"pharma-platform/internal/questdb"
 )
 
 type Config struct {
-	Plant      PlantConfig      `yaml:"plant"`
-	Collector  CollectorConfig  `yaml:"collector"`
-	API        APIConfig        `yaml:"api"`
-	Aggregator AggregatorConfig `yaml:"aggregator"`
-	Postgres   postgres.Config  `yaml:"postgres"`
-	QuestDB    questdb.Config   `yaml:"questdb"`
+	Plant     PlantConfig     `yaml:"plant"`
+	Collector CollectorConfig `yaml:"collector"`
+	API       APIConfig       `yaml:"api"`
+	Postgres  postgres.Config `yaml:"postgres"`
+	QuestDB   questdb.Config  `yaml:"questdb"`
 }
 
 type PlantConfig struct {
@@ -30,8 +27,4 @@ type CollectorConfig struct {
 type APIConfig struct {
 	Host string `yaml:"host"`
 	Port int    `yaml:"port"`
-}
-
-type AggregatorConfig struct {
-	Interval time.Duration `yaml:"interval"`
 }

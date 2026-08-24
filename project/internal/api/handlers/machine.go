@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"pharma-platform/internal/questdb"
@@ -51,7 +50,7 @@ func (h *MachineHandler) List(w http.ResponseWriter, r *http.Request) {
 		timestamps, err := h.reader.LatestTimestamps(r.Context())
 		if err == nil {
 			for _, mt := range timestamps {
-				id := parseNumericID(mt.MachineID)
+				id := parseTrailingID(mt.MachineID)
 				if id > 0 {
 					tsMap[id] = mt.Timestamp
 				}
@@ -111,7 +110,7 @@ func (h *MachineHandler) Get(w http.ResponseWriter, r *http.Request) {
 		timestamps, err := h.reader.LatestTimestamps(r.Context())
 		if err == nil {
 			for _, mt := range timestamps {
-				if parseNumericID(mt.MachineID) == id {
+				if parseTrailingID(mt.MachineID) == id {
 					s := mt.Timestamp.UTC().Format(time.RFC3339)
 					resp.LastSample = &s
 					break
@@ -122,19 +121,4 @@ func (h *MachineHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
-}
-
-func parseNumericID(s string) int {
-	if n, err := strconv.Atoi(s); err == nil {
-		return n
-	}
-	parts := strings.SplitN(s, "-", 2)
-	if len(parts) != 2 {
-		return 0
-	}
-	n, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return 0
-	}
-	return n
 }

@@ -63,7 +63,17 @@ func (c *Client) Connect(ctx context.Context) error {
 
 // Close closes the connection to the OPC UA server.
 func (c *Client) Close() error {
-	panic("not implemented")
+	if c.client == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.RequestTimeout)
+	defer cancel()
+
+	err := c.client.Close(ctx)
+	c.client = nil
+
+	return err
 }
 
 // Read reads a single tag from the OPC UA server.
@@ -71,5 +81,12 @@ func (c *Client) Read(
 	ctx context.Context,
 	tag models.Tag,
 ) (models.Sample, error) {
-	panic("not implemented")
+	if c.client == nil {
+		return models.Sample{}, ErrNotConnected
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, c.cfg.RequestTimeout)
+	defer cancel()
+
+	return c.readTag(ctx, tag)
 }

@@ -3,7 +3,9 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -99,18 +101,18 @@ func (s *AlarmStore) CriticalCount() int {
 	return count
 }
 
-func (s *AlarmStore) Acknowledge(id string) {
+func (s *AlarmStore) Acknowledge(id string) error {
 	parts := strings.SplitN(id, "|", 3)
 	if len(parts) != 3 {
-		return
+		return fmt.Errorf("malformed alarm id %q", id)
 	}
 
 	ts, err := time.Parse(time.RFC3339Nano, parts[2])
 	if err != nil {
-		return
+		return fmt.Errorf("malformed alarm timestamp %q: %w", parts[2], err)
 	}
 
-	s.acks.Ack(parts[0], parts[1], ts)
+	return s.acks.Ack(parts[0], parts[1], ts)
 }
 
 type AlarmHandler struct {
@@ -127,8 +129,20 @@ func (h *AlarmHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AlarmHandler) Acknowledge(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	h.store.Acknowledge(idStr)
+	// chi.URLParam returns the raw path segment without unescaping it, but
+	// alarm IDs contain "|" and ":" that must be percent-encoded to survive
+	// as a single path segment — decode it back before parsing.
+	idStr, err := url.PathUnescape(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "invalid alarm id", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.store.Acknowledge(idStr); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "acknowledged"})
 }

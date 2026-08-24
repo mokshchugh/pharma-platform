@@ -1,6 +1,6 @@
 postgres:
   host: localhost
-  port: 5432
+  port: 5433
   database: pharma
   user: postgres
   password: postgres
@@ -20,9 +20,6 @@ api:
 collector:
   workers: 16
   queue_size: 10000
-
-aggregator:
-  interval: 1m
 
 plant:
   name: Pharma Platform

@@ -2,9 +2,9 @@ package questdb
 
 import (
 	"context"
+	"pharma-platform/internal/models"
 	"testing"
 	"time"
-	"pharma-platform/internal/models"
 )
 
 func BenchmarkFullPipeline(b *testing.B) {
@@ -14,34 +14,35 @@ func BenchmarkFullPipeline(b *testing.B) {
 		BatchSize:     1000,
 		FlushInterval: time.Second,
 	})
-	
+
 	ctx := context.Background()
 	if err := client.Connect(ctx); err != nil {
 		b.Fatal(err)
 	}
-	
+
 	samples := make(chan models.Sample, 100000)
 	writer := NewWriter(client, "plc_samples", samples)
-	
+
 	if err := writer.Start(ctx); err != nil {
 		b.Fatal(err)
 	}
-	
+
 	b.ResetTimer()
-	
+
 	go func() {
 		for i := 0; i < b.N; i++ {
 			samples <- models.Sample{
-				Timestamp: time.Now(),
-				PLCID:     "plc-bench",
-				TagID:     "bench-tag",
-				Value:     42.0,
-				Quality:   models.QualityGood,
+				Timestamp:   time.Now(),
+				MachineID:   "1",
+				MachineName: "Bench Machine",
+				TagName:     "bench-tag",
+				Value:       42.0,
+				Quality:     models.QualityGood,
 			}
 		}
 		close(samples)
 	}()
-	
+
 	writer.Stop()
 	client.Close()
 }

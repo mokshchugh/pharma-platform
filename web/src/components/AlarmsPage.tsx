@@ -60,7 +60,7 @@ export default function AlarmsPage() {
   }, [fetchAlarms]);
 
   const acknowledge = (id: string) => {
-    fetch(`/alarms/acknowledge/${id}`, { method: "POST" }).then(fetchAlarms);
+    fetch(`/alarms/acknowledge/${encodeURIComponent(id)}`, { method: "POST" }).then(fetchAlarms);
   };
 
   const filtered = alarms

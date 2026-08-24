@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"pharma-platform/internal/api/handlers"
 	"pharma-platform/internal/config"
 )
 
@@ -31,17 +30,6 @@ func NewBackend(cfg config.APIConfig, h *Handlers) *Server {
 		http: &http.Server{
 			Addr:    addr,
 			Handler: RoutesBackend(h),
-		},
-	}
-}
-
-func NewTelemetryOnly(cfg config.APIConfig, telemetry *handlers.TelemetryHandler) *Server {
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-
-	return &Server{
-		http: &http.Server{
-			Addr:    addr,
-			Handler: routesTelemetryOnly(telemetry),
 		},
 	}
 }

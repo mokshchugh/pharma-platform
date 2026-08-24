@@ -139,36 +139,66 @@ func (w *Writer) accumulate(ctx context.Context) {
 	}
 }
 
+// maxPendingBatches bounds how many failed batches flushLoop will hold
+// onto and keep retrying during a sustained QuestDB outage, so a long
+// outage degrades to bounded memory use (and clearly-logged data loss)
+// instead of growing without limit.
+const maxPendingBatches = 5
+
 func (w *Writer) flushLoop() {
 	defer w.wg.Done()
 
-	for buf := range w.flushBuf {
-		w.flushBuffer(buf)
+	var pending [][]models.Sample
 
-		select {
-		case w.freeBuf <- buf[:0]:
-		default:
+	for buf := range w.flushBuf {
+		pending = append(pending, buf)
+
+		remaining := pending[:0]
+		for _, b := range pending {
+			if err := w.writeBatch(b); err != nil {
+				remaining = append(remaining, b)
+				continue
+			}
+
+			select {
+			case w.freeBuf <- b[:0]:
+			default:
+			}
+		}
+		pending = remaining
+
+		if len(pending) > 0 {
+			log.Printf("questdb: %d batch(es) pending retry after write failure", len(pending))
+		}
+
+		for len(pending) > maxPendingBatches {
+			dropped := pending[0]
+			pending = pending[1:]
+			log.Printf("questdb: dropping %d samples after sustained write failure (retry backlog exceeded %d batches)", len(dropped), maxPendingBatches)
 		}
 	}
 }
 
-func (w *Writer) flushBuffer(buf []models.Sample) {
+// writeBatch encodes and writes one batch, retrying once via a fresh
+// connection on failure. It returns an error (rather than swallowing it)
+// so flushLoop can requeue the batch for another attempt instead of
+// silently dropping it on the first sustained failure.
+func (w *Writer) writeBatch(buf []models.Sample) error {
 	if len(buf) == 0 {
-		return
+		return nil
 	}
 
 	data := encode(w.table, buf)
 
 	if err := writeAll(w.client.conn, []byte(data)); err != nil {
-		if err := w.client.reconnect(context.Background()); err != nil {
-			log.Printf("questdb flush error: %v", err)
-			return
+		if rerr := w.client.reconnect(context.Background()); rerr != nil {
+			return rerr
 		}
 		if err := writeAll(w.client.conn, []byte(data)); err != nil {
-			log.Printf("questdb flush error: %v", err)
-			return
+			return err
 		}
 	}
 
 	writeCount.Add(uint64(len(buf)))
+	return nil
 }

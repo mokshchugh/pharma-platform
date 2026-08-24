@@ -1,6 +1,9 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 func Validate(cfg *Config) error {
 	if cfg.Plant.Name == "" {
@@ -25,7 +28,7 @@ func Validate(cfg *Config) error {
 		cfg.Postgres.Host = "localhost"
 	}
 	if cfg.Postgres.Port == 0 {
-		cfg.Postgres.Port = 5432
+		cfg.Postgres.Port = 5433
 	}
 	if cfg.Postgres.Database == "" {
 		cfg.Postgres.Database = "pharma"
@@ -39,6 +42,12 @@ func Validate(cfg *Config) error {
 	}
 	if cfg.QuestDB.Port == 0 {
 		cfg.QuestDB.Port = 9009
+	}
+	if cfg.QuestDB.BatchSize <= 0 {
+		cfg.QuestDB.BatchSize = 1000
+	}
+	if cfg.QuestDB.FlushInterval <= 0 {
+		cfg.QuestDB.FlushInterval = time.Second
 	}
 
 	return nil

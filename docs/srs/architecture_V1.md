@@ -2,9 +2,12 @@
 
 ## Pharmaceutical Industrial Data Acquisition & Analytics Platform
 
-**Version:** 0.3 (Schema Refactor)
+**Version:** 0.4 (Post-cleanup)
 
 **Status:** Implementation Phase
+
+For a complete, file-by-file inventory, see [`../../CODEBASE_AUDIT.md`](../../CODEBASE_AUDIT.md).
+This document stays high-level; the audit doc is the source of truth for "what exists."
 
 ---
 
@@ -13,33 +16,13 @@
 * Go (module root at `project/`)
 * QuestDB (time-series telemetry)
 * PostgreSQL (persistent configuration and business data)
-* Vanilla HTML/JS dashboard (embedded) + React SPA (separate)
+* React SPA (`web/`), also embedded into the Go binary for single-binary deployment
 * Docker + Docker Compose
 
 # 2. Repository Layout
 
-```
-pharma-platform/
-├── project/                # Go module root
-│   ├── cmd/                # Entry points (6 binaries)
-│   │   ├── migrate/        # Schema migration (QuestDB + Postgres)
-│   │   └── ...
-│   ├── internal/           # All Go packages
-│   ├── config/             # bootstrap.yaml
-│   ├── deploy/             # SQL migrations
-│   │   ├── postgres/
-│   │   │   ├── init/       # Postgres schema DDL
-│   │   │   └── seed/       # Postgres seed data
-│   │   └── questdb/init/   # QuestDB table DDL + materialized views
-│   ├── runtime/            # Docker files + compose
-│   ├── go.mod
-│   └── go.sum
-├── web/                    # React SPA (separate frontend)
-├── persistent/             # Docker bind-mount volumes
-├── docs/                   # ADRs, SRS, roadmap
-├── Makefile                # Developer commands
-└── .gitignore
-```
+See [`../../CODEBASE_AUDIT.md` §2](../../CODEBASE_AUDIT.md#2-repository-layout) for the
+current tree — not duplicated here to avoid the two copies drifting apart.
 
 # 3. High-Level Architecture
 
@@ -49,7 +32,7 @@ pharma-platform/
            ┌──────────┴──────────┐
            │                     │
            ▼                     ▼
-      Go API Server         React SPA (optional)
+      Go API Server         React SPA (dev) / embedded SPA (prod)
            │                     │
            └──────────┬──────────┘
                       │
@@ -59,40 +42,38 @@ pharma-platform/
           QuestDB         PostgreSQL
               ▲
               │
-        PLC Collector
+   telemetry.Tracker (derives alarms/run-state/production/downtime)
               ▲
               │
-         PLC Network
+   Simulator (make simulate) or a PLC driver pipeline (planned, make real)
 ```
 
 # 4. Database Responsibilities
 
 ### QuestDB (project/deploy/questdb/init/)
 - `plc_samples` — raw telemetry (`machine_id`, `machine_name`, `tag_name`, `value`, `quality`)
-- `plc_samples_1m` — 1-minute aggregated materialized view
-- `plc_samples_1h` — 1-hour aggregated materialized view
-- `plc_samples_1d` — 1-day aggregated materialized view
-- `plc_samples_1w` — 1-week aggregated materialized view
+- `plc_samples_1m` / `_1h` / `_1d` / `_1w` — materialized rollup views
 - `alarms` — alarm events
 - `events` — batch and machine events
 - `logs` — system logs
+- `production_counts`, `machine_state` — per-machine production/state snapshots
 
 ### PostgreSQL (project/deploy/postgres/init/)
-- `machines` — machine/PLC inventory
-- `tags` — tag definitions per machine (references `machines.id`)
+- `machines`, `tags` — machine/PLC inventory and tag definitions
+- `production_runs`, `downtime_events`, `oee_targets` — OEE/production tracking
+- `machine_control_state` — start/stop/setpoint/mode control state
+- `alarm_acks` — alarm acknowledgement state (QuestDB has no UPDATE, so acks live here and get joined at query time)
 
 # 5. Entry Points (project/cmd/)
 
-| Binary | Postgres | QuestDB | Seed | Collector | API |
+| Binary | Postgres | QuestDB | Seed | Telemetry source | API |
 |---|---|---|---|---|---|
-| `pharma-platform` | Schema | Tables | No | Idle | Yes |
-| `dev-mode` | Schema+Seed | Tables | If empty | Mock | Yes |
-| `api` | Schema+Seed | Tables | If empty | Stub | Yes |
-| `collector-sim` | Read tags | Tables | No | Mock→QuestDB | No |
-| `seed` | Schema+Seed | No | Always | No | No |
-| `migrate` | Schema only | Tables | No | No | No |
+| `pharma-platform` (`make real`) | Schema | Tables | No | None yet — no machines configured | Yes |
+| `dev-mode` (`make simulate`) | Schema+Seed | Tables | If empty | Built-in simulation engine | Yes |
+| `seed` | Schema+Seed | No | Always | — | No |
+| `migrate` | Schema only | Tables | No | — | No |
 
-All invoked via `make` from the repository root.
+All invoked via `make` (or `./run.sh`) from the repository root.
 
 # 6. Configuration
 
@@ -103,7 +84,6 @@ postgres:    # host, port, database, user, password
 questdb:     # host, port, batch_size, flush_interval
 api:         # host, port
 collector:   # workers, queue_size
-aggregator:  # interval
 plant:       # name, location, timezone
 ```
 
@@ -114,16 +94,17 @@ plant:       # name, location, timezone
 3. ADR-0003: PostgreSQL for business data
 4. ADR-0004: `persistent/` directory, `project/` for go module
 5. ADR-0005: Docker Compose at `project/runtime/docker-compose.yml`
-6. ADR-0007: Protocol-agnostic PLC driver interface
-7. ADR-0008: Collector with scheduler + worker pool
-8. ADR-0011: 18-endpoint REST API
-9. ADR-0012: Dashboard API v1
-10. ADR-0013: Embedded SPA frontend
-11. ADR-0014: Collector pause/resume
-12. ADR-0015: Dev-mode with DB-backed mock data
-13. ADR-0016: PostgreSQL store for machines and tags
-14. ADR-0017: Bootstrap configuration
-15. ADR-0018: Identity field refactoring (plc_id/tag_id → machine_id/machine_name/tag_name)
+6. ADR-0006: OPC UA-first driver strategy
+7. ADR-0007: Protocol-agnostic PLC driver interface
+8. ADR-0008: Collector with scheduler + worker pool (design decision retained for when real driver polling is rebuilt; the original implementation was removed as dead code alongside `cmd/collector-sim` — see roadmap Phase 4)
+9. ADR-0011: Initial REST API
+10. ADR-0012: Dashboard API v1
+11. ADR-0013: Embedded SPA frontend
+12. ADR-0014: Collector pause/resume
+13. ADR-0015: Dev-mode with DB-backed mock data
+14. ADR-0016: PostgreSQL store for machines and tags
+15. ADR-0017: Bootstrap configuration
+16. ADR-0018: Identity field refactoring (plc_id/tag_id → machine_id/machine_name/tag_name)
 
 # 8. Identity Model
 
@@ -138,21 +119,28 @@ The API surface still exposes URL parameters as `plc_id` and `tag_id` for backwa
 # 9. Data Flow
 
 ```
-PLC Network
-    │
-    ▼
-PLC Driver (opcua, mc, fins, etc.)
-    │
-    ▼
-Collector (scheduler + worker pool)
-    │  models.Sample{MachineID, MachineName, TagName, Value, Quality}
-    ▼
-QuestDB Writer (ILP over TCP, double-buffer)
-    │  plc_samples,machine_id=...,machine_name=...,tag_name=... value=...,quality=...i
-    ▼
-QuestDB (plc_samples table + materialized views)
-    │
-    ├──► Reader (REST HTTP API) ──► Go API Server ──► Dashboard
-    │
-    └──► Materialized Views (1m, 1h, 1d, 7d) ──► Aggregate API
+Simulator (internal/simulation)          PLC Driver (planned: internal/plc/registry
+   or, eventually, a real driver              + internal/plc/drivers/opcua, others TBD)
+              │                                          │
+              └───────────────────┬──────────────────────┘
+                                   ▼
+                       models.Sample{MachineID, MachineName, TagName, Value, Quality}
+                                   │
+                                   ▼
+                  telemetry.Tracker.Observe() — derives alarms, machine_state,
+                  production_runs, downtime_events from the raw sample stream
+                                   │
+                                   ▼
+                  QuestDB Writer (ILP over TCP, double-buffered, bounded retry)
+                                   │
+                                   ▼
+                  QuestDB (plc_samples + materialized views)  +  PostgreSQL
+                                   │
+                                   ├──► Reader (REST HTTP API) ──► Go API Server ──► Dashboard
+                                   │
+                                   └──► business.RealEngine (/api/v2/analytics/*)
 ```
+
+Both `internal/simulation.Simulator` and any future real driver pipeline feed the
+*same* `telemetry.Tracker`, so simulated runs exercise the real alarm/OEE/production
+derivation logic rather than a simulation-only shortcut.

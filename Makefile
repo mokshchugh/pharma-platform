@@ -47,12 +47,6 @@ real:
 		wait $$API_PID 2>/dev/null; \
 		exit $$STATUS
 
-# Standalone fake-telemetry writer with no API/dashboard attached —
-# a lower-level utility for exercising the collector/writer pipeline
-# in isolation, not one of the two primary run modes above.
-collector-sim:
-	cd project && go build -o collector-sim cmd/collector-sim/collector-sim.go && exec ./collector-sim
-
 migrate:
 	cd project && go run cmd/migrate/main.go
 
@@ -62,4 +56,4 @@ seed:
 build:
 	cd project && go build ./...
 
-.PHONY: setup up up-all down logs simulate real collector-sim migrate seed build
+.PHONY: setup up up-all down logs simulate real migrate seed build

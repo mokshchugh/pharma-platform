@@ -1,4 +1,4 @@
-# ADR-0002: Use PostgreSQL for Aggregated Business Data
+# ADR-0003: Use PostgreSQL for Aggregated Business Data
 
 **Status:** Accepted
 

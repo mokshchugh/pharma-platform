@@ -1,253 +1,169 @@
 # Pharma Platform — Industrial Telemetry Platform
 
-A production-grade platform for collecting, storing, and visualizing telemetry from pharmaceutical manufacturing equipment. Built with Go, QuestDB, PostgreSQL, and a React SPA dashboard.
+A platform for collecting, storing, and visualizing telemetry from pharmaceutical
+manufacturing equipment: OEE, production runs, downtime, alarms, and analytics, on top of
+Go, QuestDB, PostgreSQL, and a React dashboard.
+
+For a full file-by-file breakdown of the codebase, see [`CODEBASE_AUDIT.md`](CODEBASE_AUDIT.md).
+For architecture decisions, see [`docs/adr/`](docs/adr/).
 
 ## Architecture
 
 ```
-PLC Network
-    │
-    ▼
-PLC Drivers (OPC UA, MC, FINS, EtherNet/IP)
-    │
-    ▼
-Collector (scheduler + worker pool + ILP writer)
-    │
-    ├──► QuestDB (time-series telemetry, materialized views)
-    │
-    └──► PostgreSQL (machine/tag configuration)
-            │
-            ▼
-        Go API Server ────► React SPA / Embedded Dashboard
+                 ┌────────────────────────┐
+   PLC Network ─►│  PLC Drivers (planned)  │
+                 └───────────┬─────────────┘
+                             │
+   Simulator ────────────────┤   (make simulate — no PLCs needed)
+                             ▼
+                 ┌────────────────────────┐
+                 │  telemetry.Tracker      │  derives alarms / run-state /
+                 │  (producer-agnostic)    │  production-runs / downtime
+                 └───────────┬─────────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              ▼                             ▼
+        QuestDB                        PostgreSQL
+   (raw samples, alarms,          (machines, tags, production_runs,
+    machine_state, rollups)       downtime_events, controls, alarm_acks)
+              │                             │
+              └──────────────┬──────────────┘
+                              ▼
+                        Go API Server
+                              │
+                              ▼
+                   React SPA / Embedded Dashboard
 ```
 
-**Key design decisions:**
-- QuestDB for high-ingestion-rate time-series storage with built-in aggregation views
-- PostgreSQL for relational business data (machines, tags)
-- Human-readable identity columns (`machine_name`, `tag_name`) embedded in every telemetry row — no cross-database JOINs for dashboard display
-- Protocol-agnostic PLC driver interface — swap drivers without changing collection logic
-- Double-buffered ILP writer — absorbs network latency without blocking the collector
+**Key design decisions** (see `docs/adr/` for the full record):
+- QuestDB for high-ingestion-rate time-series storage with built-in materialized rollups
+- PostgreSQL for relational/business data (machines, tags, production runs, OEE targets, controls)
+- Human-readable identity columns (`machine_id`/`machine_name`/`tag_name`) on every telemetry row — no cross-database joins for display (ADR-0018)
+- A single producer-agnostic derivation pipeline (`internal/telemetry.Tracker`) turns raw tag samples into alarms/production-runs/downtime regardless of whether the samples came from the simulator or a real driver
+- Protocol-agnostic `plc.Driver` interface (`internal/plc/driver.go`) — real protocol drivers are not yet implemented (see Status below)
+- Single-binary deployment: the compiled SPA is embedded into the Go binary via `go:embed` (ADR-0013)
 
 ## Quick Start
 
 ```bash
-# 1. Start infrastructure (PostgreSQL + QuestDB)
-make up
-
-# 2. Seed the database (create schema + load plant data; once, or after reset)
-make seed
-
-# 3. Run dev mode (mock collector + API + embedded dashboard)
-make dev
+./run.sh          # installs dependencies, starts Docker infra, prompts for a run mode
 ```
 
-Open http://localhost:8081/
+Or manually:
 
-## Commands
-
-| `make ...` | What it does |
-|------------|-------------|
-| `setup` | Creates persistent/ directories |
-| `up` | setup + docker compose up (postgres + questdb) |
-| `up-all` | Build and start everything via Docker Compose |
-| `down` | docker compose down |
-| `logs` | Tail docker compose logs |
-| `dev` | run cmd/dev-mode (migrate + seed + mock collector + API) |
-| `api` | run cmd/api (migrate + seed + API only) |
-| `sim` | run cmd/collector-sim (mock data into QuestDB) |
-| `seed` | run cmd/seed (schema + seed SQL for PostgreSQL) |
-| `migrate` | run cmd/migrate (QuestDB tables/views + PostgreSQL schema) |
-| `build` | go build ./... inside project/ |
-| `prod` | run cmd/pharma-platform (production binary) |
-
-## API Endpoints
-
-### Telemetry
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/telemetry/latest` | Latest sample per machine/tag |
-| `GET` | `/telemetry/latest/{plc_id}` | Per machine scoped latest |
-| `GET` | `/telemetry/latest/{plc_id}/{tag_id}` | Single latest sample |
-| `GET` | `/telemetry/history` | Historical samples (query: `plc_id`, `tag_id`, `start`, `end`) |
-| `GET` | `/telemetry/aggregate/1m` | 1-minute aggregates |
-| `GET` | `/telemetry/aggregate/1h` | 1-hour aggregates |
-| `GET` | `/telemetry/aggregate/1d` | 1-day aggregates |
-| `GET` | `/telemetry/aggregate/1w` | 1-week aggregates |
-
-### Machines (PLCs)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/plcs` | List all machines |
-| `GET` | `/plcs/{plc_id}` | Single machine details |
-| `GET` | `/plcs/{plc_id}/status` | Machine connectivity and tag stats |
-| `GET` | `/plcs/{plc_id}/tags` | Tags belonging to a machine |
-| `PUT` | `/plcs/{plc_id}/pause` | Pause collection for a machine |
-| `PUT` | `/plcs/{plc_id}/resume` | Resume collection for a machine |
-| `GET` | `/plcs/status` | All machine statuses |
-| `GET` | `/tags` | All tags across all machines |
-
-### Health
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Liveness check |
-
-> Note: URL path parameters still use `plc_id`/`tag_id` for backward compatibility; internally they map to `machineID`/`tagName`.
-
-## Project Structure
-
-```
-pharma-platform/
-├── project/                    # Go module root
-│   ├── cmd/                    # Entry points (6 binaries)
-│   │   ├── pharma-platform/    # Production binary
-│   │   ├── dev-mode/           # Development all-in-one
-│   │   ├── api/                # Standalone API server
-│   │   ├── collector-sim/      # Standalone simulator
-│   │   ├── seed/               # Standalone DB seeder
-│   │   └── migrate/            # Standalone migration runner
-│   ├── internal/
-│   │   ├── api/                # REST API handlers + router
-│   │   ├── collector/          # Scheduler + worker pool
-│   │   ├── plc/                # Driver interface + implementations
-│   │   ├── questdb/            # Writer (ILP) + Reader (REST)
-│   │   ├── postgres/           # Connection pool + migration
-│   │   ├── store/              # PostgreSQL-backed MachineStore, TagStore
-│   │   ├── config/             # Bootstrap config loader
-│   │   ├── models/             # Sample, MachineConfig, Tag, etc.
-│   │   └── aggregator/         # Materialized view aggregation
-│   ├── deploy/
-│   │   ├── postgres/init/      # PostgreSQL schema DDL
-│   │   ├── postgres/seed/      # Seed data (11 machines, 128 tags)
-│   │   └── questdb/init/       # QuestDB DDL + materialized views
-│   ├── runtime/                # Docker compose + Dockerfile
-│   ├── config/bootstrap.yaml   # Single config file
-│   └── go.mod
-├── web/                        # React SPA frontend
-├── persistent/                 # Docker bind-mount volumes (git-tracked skeleton)
-├── docs/                       # ADRs, SRS, roadmap
-├── Makefile                    # Developer command shortcuts
-└── README.md
+```bash
+make up          # start Postgres + QuestDB
+make simulate    # build + run dev-mode (simulated telemetry) + dashboard
 ```
 
-## Storage Model
+Open `http://localhost:5173` (Vite dev server, proxies API calls to `:8081`) or
+`http://localhost:8081` directly.
 
-### QuestDB — Telemetry
+## Run modes
 
-The `plc_samples` table uses three identity columns:
+| Command | Binary | Data source | Pre-configured machines? |
+|---|---|---|---|
+| `make simulate` | `cmd/dev-mode` | Built-in simulation engine (`internal/simulation`) — realistic per-machine production, faults, and recovery | Yes (11 seeded machines/tags) |
+| `make real` | `cmd/pharma-platform` | None yet — no driver-polling pipeline is wired up (see Status) | No — empty database, dashboard is ready but has nothing to show until machines/drivers exist |
 
-| Column | Type | Example |
-|--------|------|---------|
-| `machine_id` | SYMBOL | `"1"` |
-| `machine_name` | SYMBOL | `"Fluid Bed Dryer"` |
-| `tag_name` | SYMBOL | `"Inlet_Air_Temp"` |
-| `value` | DOUBLE | `25.4` |
-| `quality` | INT | `192` |
-| `timestamp` | TIMESTAMP | `2026-07-10T12:00:00Z` |
+`make simulate` is the mode to use to see the product working end to end: realistic,
+differentiated OEE per machine, alarms, production runs, and downtime events, all derived
+from a simulated but structurally-real telemetry stream. See
+[`CODEBASE_AUDIT.md` §1](CODEBASE_AUDIT.md#1-how-the-run-modes-work) for exactly how each
+mode boots and what it wires together.
 
-Materialized views (`plc_samples_1m`, `1h`, `1d`, `1w`) aggregate by `machine_id, machine_name, tag_name`.
+## Other Make targets
 
-### PostgreSQL — Configuration
+| Command | Purpose |
+|---|---|
+| `make up` | Start Postgres + QuestDB containers |
+| `make up-all` | Start Postgres + QuestDB + the containerized app |
+| `make down` | Stop all containers |
+| `make logs` | Tail container logs |
+| `make migrate` | Run schema migrations only |
+| `make seed` | Run schema migrations + seed data, no server |
+| `make build` | `go build ./...` |
 
-| Table | Purpose |
-|-------|---------|
-| `machines` | Plant equipment inventory |
-| `tags` | Tag definitions per machine |
+## API surface
+
+Full endpoint list in [`CODEBASE_AUDIT.md` §4](CODEBASE_AUDIT.md#4-full-endpoint-reference).
+Summary: telemetry (`/telemetry/*`), machine/PLC/tag config (`/plcs`, `/tags`,
+`/api/v1/machines`), alarms (`/alarms*`), controls (`/api/v1/controls/*`), production/OEE/
+downtime (`/api/v1/{production,oee,downtime}*`), and the business analytics layer
+(`/api/v2/analytics/*` — overview, production, quality, machines, energy, alarms,
+correlations, maintenance, insights).
+
+## Storage model
+
+**PostgreSQL** — relational/business data: `machines`, `tags`, `production_runs`,
+`downtime_events`, `oee_targets`, `machine_control_state`, `alarm_acks`.
+
+**QuestDB** — time-series data: `plc_samples` (raw telemetry, partitioned by day),
+`alarms`, `events`, `logs`, `production_counts`, `machine_state`, plus materialized rollup
+views `plc_samples_1m`/`1h`/`1d`/`1w`.
 
 ## Configuration
 
-Single file: `project/config/bootstrap.yaml`
+Runtime config lives in `project/config/bootstrap.yaml`:
 
 ```yaml
 postgres:
   host: localhost
-  port: 5432
+  port: 5433   # mapped off the default 5432 to avoid clashing with a local Postgres install
   database: pharma
-  user: pharma
-  password: pharma
+  user: postgres
+  password: postgres
 
 questdb:
   host: localhost
-  port: 8812  # PostgreSQL wire protocol (writer)
-  http_port: 9000
-  batch_size: 500
-  flush_interval: 100ms
+  port: 9009
+  batch_size: 1000
+  flush_interval: 1s
 
 api:
   host: 0.0.0.0
   port: 8081
 
 collector:
-  workers: 4
-  queue_size: 1000
-
-aggregator:
-  interval_as_seconds: 60
+  workers: 16
+  queue_size: 10000
 
 plant:
-  name: "Pharma Plant"
-  location: "Building A"
-  timezone: "Asia/Kolkata"
+  name: Pharma Platform
+  location: Manufacturing Facility
+  timezone: Asia/Kolkata
 ```
 
 ## Development
 
-### Prerequisites
-
-- Go 1.22+
-- Docker + Docker Compose
-- Make
-
-### Workflow
+**Prerequisites:** Go, Docker + Docker Compose, Node.js/npm (for the frontend dev server).
 
 ```bash
-# Start databases
-make up
-
-# Run seed (first time or after reset)
-make seed
-
-# Start dev (migrate + seed + mock collector + API + dashboard)
-make dev
-
-# In another terminal, start the React frontend
-cd web && npm install && npm run dev
-
-# Or use the built-in embedded dashboard at http://localhost:8081
+make up                              # infra
+cd project && go build ./...         # backend build check
+cd web && npm install && npm run dev # frontend dev server (if not using `make simulate`)
 ```
 
-### Running tests
+Backend tests: `cd project && go test ./...`
 
-```bash
-cd project && go test ./...
-```
+## Status
 
-## Design Records
+This project has a working simulated demo (`make simulate`) with a full dashboard, real
+OEE/production/alarm calculation, and a real backend for everything except energy metrics
+(no power/vibration sensor data exists in the schema, so that section is explicitly flagged
+as synthetic in its API response).
 
-Architecture Decision Records (ADRs) are in `docs/adr/`:
-
-| ADR | Title |
-|-----|-------|
-| 001 | QuestDB for Time-Series Storage |
-| 002 | Go for Backend Implementation |
-| 003 | PostgreSQL for Business Data |
-| 004 | `persistent/` and `project/` Directory Layout |
-| 005 | Docker Compose for Local Development |
-| 007 | Protocol-Agnostic PLC Driver Interface |
-| 008 | Collector with Scheduler + Worker Pool |
-| 009 | QuestDB Write Pipeline (ILP over TCP) |
-| 010 | QuestDB Read Pipeline (REST API) |
-| 011 | REST API Design (go-chi/chi) |
-| 012 | Dashboard API v1 |
-| 013 | Embedded SPA Frontend |
-| 014 | Collector Pause/Resume |
-| 015 | Dev-Mode with DB-Backed Mock Data |
-| 016 | PostgreSQL Store for Machines and Tags |
-| 017 | Bootstrap Configuration |
-| 018 | Identity Field Refactoring (plc_id/tag_id → machine_id/machine_name/tag_name) |
+Real PLC connectivity is partially built: the driver interface (`internal/plc/driver.go`)
+is defined, the OPC UA driver (`internal/plc/drivers/opcua`) is fully implemented and unit
+tested, and a driver registry (`internal/plc/registry`) + connection manager
+(`internal/plc/manager.go`) exist to construct and own driver instances — OPC UA is wired,
+every other protocol returns an explicit "not implemented" error rather than doing nothing
+silently. What's still missing: a real polling collector wired to the registry, and a
+dashboard-driven machine-configuration UI to actually connect `make real` to equipment. See
+[`CODEBASE_AUDIT.md` §5](CODEBASE_AUDIT.md#5-known-gaps-and-what-changed-this-session) for
+the full list of known gaps, and `docs/roadmap.md` for planned work.
 
 ## License
 
-MIT
+There is no `LICENSE` file in this repository — no license terms have been finalized.
+Do not treat this project as licensed for reuse until that's resolved.

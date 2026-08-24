@@ -3,8 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-
-	"pharma-platform/internal/collector"
 )
 
 type CollectorHandle interface {
@@ -14,16 +12,6 @@ type CollectorHandle interface {
 	TickCount() int64
 	DispatchSum() int64
 }
-
-type CollectorAdapter struct {
-	C *collector.Collector
-}
-
-func (a *CollectorAdapter) IsPaused() bool      { return a.C.IsPaused() }
-func (a *CollectorAdapter) Pause()               { a.C.Pause() }
-func (a *CollectorAdapter) Resume()              { a.C.Resume() }
-func (a *CollectorAdapter) TickCount() int64     { return a.C.TickCount }
-func (a *CollectorAdapter) DispatchSum() int64   { return a.C.DispatchSum }
 
 type CollectorHandler struct {
 	handle CollectorHandle
