@@ -144,7 +144,7 @@ or any other terms.
 |---|---|
 | `machine.go` | `MachineStore`: PLC/machine listing (`GetPLCs`, `GetAllMachines`, `GetMachine`, `TogglePLCEnabled`), shared `parseDataType`/`machineIDFromString` helpers (also used by `tag.go`). Hardcodes `PollInterval = 100ms` for every tag regardless of DB config. |
 | `tag.go` | `TagStore`: tag listing/lookup, reuses `machine.go`'s helpers. |
-| `production.go` | `ProductionStore`: production runs, downtime events, OEE targets/calculation (`CalculateOEE`), dashboard summary, production/quality aggregation by hour/day/week/shift/machine/batch, and `CloseStaleRunsAndDowntime()` (startup reconciliation). `ListRuns`/`ListDowntime` branch on `machineID > 0` to support both filtered and unfiltered queries. |
+| `production.go` | `ProductionStore`: production runs, downtime events, OEE targets/calculation (`CalculateOEE`), dashboard summary, production/quality aggregation by hour/day/week/shift/machine/batch, and `CloseStaleRunsAndDowntime()` (startup reconciliation). `ListRuns`/`ListDowntime` branch on `machineID > 0` to support both filtered and unfiltered queries. `CalculateOEE` clamps availability/performance/quality to `[0,1]` via `clampFraction()` before computing `overall` — a safety net against a misconfigured/missing `ideal_cycle_time_seconds` pushing performance past 100% (fixed this session, see §5). |
 | `controls.go` | `ControlStore`: `machine_control_state` CRUD (`EnsureDefaults`, `List`, `Get`, `Start`, `Stop`, `SetSetpoint`, `SetMode`) backing the Controls page. |
 | `alarm_acks.go` | `AlarmAckStore`: acknowledgement state for alarms (QuestDB has no UPDATE, so acks live in Postgres and get joined at query time). `machine_id` is stored as `INTEGER REFERENCES machines(id)`; the store converts to/from the string form used elsewhere in the telemetry pipeline at its API boundary. |
 | `migrate.go` | `MigratePostgres`/`MigrateQuestDB`: runs `*.sql` files from a directory in filename order; Postgres seed only runs if the `machines` table is empty. |
@@ -208,7 +208,7 @@ or any other terms.
 
 ### `project/deploy/postgres/seed/`
 
-`002_seed_machines.sql` seeds 11 machines (mixed protocols: Mitsubishi FX5U/MC, Omron CJ2M/FINS, B&R X20/OPC UA, Allen Bradley MicroLogix/EtherNet-IP — only guarded to run once, on an empty table). `003_seed_tags.sql` seeds ~100 tags across those machines using PLC-realistic addressing (`D100`, `M100`, etc).
+`002_seed_machines.sql` seeds 11 machines (mixed protocols: Mitsubishi FX5U/MC, Omron CJ2M/FINS, B&R X20/OPC UA, Allen Bradley MicroLogix/EtherNet-IP — only guarded to run once, on an empty table). `003_seed_tags.sql` seeds ~100 tags across those machines using PLC-realistic addressing (`D100`, `M100`, etc). `004_seed_oee_targets.sql` seeds an `oee_targets` row per machine with `ideal_cycle_time_seconds = 1.0`, matching the simulator's actual throughput (fixed this session — see §5).
 
 ### `project/deploy/questdb/init/` — QuestDB schema
 
@@ -345,6 +345,7 @@ GET  /api/v2/analytics/insights
 - Two Postgres-connectivity bugs from earlier in this project's life: a redundant fake collector running in parallel with the real simulator (corrupting the sample stream), and `s.Value == 1`-style comparisons against an untyped constant that could never match an `any`-typed `float64` value.
 - Two stale/broken QuestDB benchmark test files (`bench_encode_test.go`, `bench_pipeline_test.go`) referenced `models.Sample` fields (`PLCID`/`TagID`) removed by the ADR-0018 identity refactor, predating this session; updated to the current field names so `go vet ./...`/`go test ./...` are fully clean.
 - ADR-0003's file header was internally mislabeled "ADR-0002" — fixed.
+- `CalculateOEE` defaulted `ideal_cycle_time_seconds` to 60s/part whenever a machine had no `oee_targets` row — which was every machine, since nothing seeded that table. The simulator actually produces a part roughly every 1.0-1.3s, so `performance = idealCycle * parts / runtime` was inflating to 4000%+ instead of a sane sub-100% figure. Fixed with a new seed file (`004_seed_oee_targets.sql`, `ideal_cycle_time_seconds = 1.0`) plus a `clampFraction()` safety net in `CalculateOEE` bounding availability/performance/quality to `[0,1]` regardless of target configuration.
 
 **Verified working end-to-end**: `go build ./...`, `go vet ./...`, and `go test ./...` are all
 clean with no errors. `make simulate` was run against a fresh Postgres/QuestDB (port 5433)

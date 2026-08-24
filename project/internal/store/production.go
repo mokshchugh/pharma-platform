@@ -353,6 +353,20 @@ func (s *ProductionStore) UpsertOEETargets(t *models.OEETargets) error {
 	return nil
 }
 
+// clampFraction bounds an OEE component to [0,1]. Availability/performance/
+// quality are ratios of actual-to-ideal and should never legitimately exceed
+// 100% — if the inputs (e.g. a misconfigured ideal cycle time) push them
+// over, clamp rather than report a nonsensical >100% figure.
+func clampFraction(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
 func (s *ProductionStore) CalculateOEE(machineID int, window time.Duration) *models.OEEResponse {
 	db := s.client.DB()
 	if db == nil {
@@ -429,6 +443,9 @@ func (s *ProductionStore) CalculateOEE(machineID int, window time.Duration) *mod
 		quality = 0
 	}
 
+	availability = clampFraction(availability)
+	performance = clampFraction(performance)
+	quality = clampFraction(quality)
 	overall = availability * performance * quality
 
 	return &models.OEEResponse{

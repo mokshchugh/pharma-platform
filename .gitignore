@@ -27,3 +27,6 @@ __pycache__/
 ~$*.docx
 ~$*.xlsx
 ~$*.pptx
+
+# Internal deliverables (private, not for the public repo)
+Pharma_Platform_Internship_Report.docx
