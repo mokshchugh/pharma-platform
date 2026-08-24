@@ -22,3 +22,8 @@ node_modules/
 # Python
 __pycache__/
 *.pyc
+
+# Office lock files
+~$*.docx
+~$*.xlsx
+~$*.pptx
